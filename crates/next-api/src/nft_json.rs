@@ -249,10 +249,6 @@ impl Asset for NftJsonAsset {
                     .await?;
 
             for referenced_chunk in all_assets.iter().copied() {
-                if chunk.eq(&referenced_chunk) {
-                    continue;
-                }
-
                 let referenced_chunk_path = referenced_chunk.path().await?;
 
                 if referenced_chunk_path == next_config_path {
