@@ -1219,7 +1219,7 @@ impl TurboTasksBackend {
                 None
             };
 
-            SnapshotItem {
+            SnapshotItem::Put {
                 task_id,
                 meta,
                 data,
