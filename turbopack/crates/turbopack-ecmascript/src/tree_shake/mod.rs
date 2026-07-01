@@ -491,6 +491,20 @@ pub(super) async fn split_module(asset: Vc<EcmascriptModuleAsset>) -> Result<Vc<
         .cell());
     }
 
+    // Don't split the generated client-reference proxy module. It is a codegen
+    // delegate for `EcmascriptClientReferenceModule` whose exports are all used,
+    // so splitting yields no benefit. Splitting it duplicates its `<exports>`
+    // part in the module graph (the proxy is used for codegen but reached via
+    // two paths), which trips the duplicate-ident check in
+    // `ModuleGraph::from_graphs`. See `BindingUsageInfo::used_exports` in
+    // `binding_usage_info.rs` for a similar workaround.
+    if name.contains("__nextjs-internal-proxy.") {
+        return Ok(SplitResult::Failed {
+            parse_result: parsed,
+        }
+        .cell());
+    }
+
     let parse_result = parsed.await?;
 
     match &*parse_result {
@@ -571,7 +585,7 @@ pub(super) async fn split_module(asset: Vc<EcmascriptModuleAsset>) -> Result<Vc<
                             eval_context.unresolved_mark,
                             eval_context.top_level_mark,
                             eval_context.force_free_values.clone(),
-                            None,
+                            Some(&**comments as &dyn Comments),
                         )
                     });
 
