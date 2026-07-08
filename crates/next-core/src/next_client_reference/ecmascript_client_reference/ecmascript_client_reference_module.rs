@@ -166,11 +166,11 @@ impl EcmascriptClientReferenceModule {
 
         // Tag the ident with a `ModulePart::Exports` part so tree-shaking's
         // `split_module` opt-out (`!ident.parts.is_empty()`) skips this module.
-        // The proxy is a codegen delegate whose exports are all used, so
-        // splitting yields no benefit; splitting it also duplicates its
-        // `<exports>` part in the module graph (the proxy is reached via two
-        // paths), tripping the duplicate-ident check in
-        // `ModuleGraph::from_graphs`.
+        // Because of the state of this feature, it is unclear if this is competely
+        // the right course of action. Not skipping this causes "Duplicate module idents"
+        // errors.
+        // TODO: Understand more deeply why these occur and if skipping here is the best
+        // course of action or if there is a way to avoid these duplicates without skipping.
         let proxy_ident = AssetIdent::from_path(proxy_path)
             .with_part(ModulePart::Exports)
             .into_vc();
