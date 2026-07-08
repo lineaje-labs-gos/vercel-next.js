@@ -1056,7 +1056,7 @@ export async function initialize(opts: {
 
       const responseHeaders = fromNodeOutgoingHttpHeaders(resHeaders || {})
 
-      if (bodyStream) {
+      if (finished && bodyStream) {
         await writeRawHttpResponse(
           req,
           socket,
@@ -1068,7 +1068,13 @@ export async function initialize(opts: {
         return
       }
 
-      if (statusCode && statusCode >= 300 && statusCode < 400) {
+      if (
+        finished &&
+        resHeaders !== null &&
+        statusCode &&
+        statusCode >= 300 &&
+        statusCode < 400
+      ) {
         const destination = url.format(parsedUrl)
         if (!responseHeaders.has('location')) {
           responseHeaders.set('location', destination)
@@ -1105,7 +1111,7 @@ export async function initialize(opts: {
 
       if (matchedOutput) return socket.end()
 
-      if (res.finished || statusCode) {
+      if (res.finished) {
         await writeRawHttpResponse(
           req,
           socket,
