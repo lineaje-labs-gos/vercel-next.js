@@ -1,7 +1,8 @@
 use std::{borrow::Cow, collections::BinaryHeap, hash::BuildHasherDefault, mem::take};
 
 use anyhow::{Context, Result};
-use rustc_hash::FxHasher;
+use roaring::RoaringBitmap;
+use rustc_hash::{FxHashMap, FxHasher};
 use smallvec::SmallVec;
 use tracing::{Instrument, field::Empty};
 use turbo_prehash::BuildHasherExt;
@@ -244,6 +245,10 @@ pub async fn make_production_chunks(
                 let priority_boost =
                     priority_boost_percent.map_or(1.5, |percent| percent as f64 / 100.0);
 
+                // If chunk group clusters are configured in `next.config.js` and the patterns
+                // match at least one route.
+                let has_clusters = heuristics.clusters.iter().any(|c| !c.is_empty());
+
                 let mut iterations = 0;
                 while chunks_to_merge.len() > 1 {
                     // Find best candidate
@@ -297,6 +302,12 @@ pub async fn make_production_chunks(
                             let b_rem = b_groups - o_groups;
 
                             /*
+                                This comment describes the algorithm with the default
+                                probabilities, 2/3 for N=1 and 1/3 for N=2 as well as
+                                the default request-cost. The six combinations in the
+                                N=2 case are also weighted equally. These things can
+                                change if custom chunking heuristics are configured.
+
                                 UNMERGED CASE
 
                                 from the total of `groups` chunk groups
@@ -374,80 +385,128 @@ pub async fn make_production_chunks(
                             */
 
                             /*
-                                The N = 2 case is more complicated, since we have to consider all possible combinations of the cases X, Y and Z for the two chunk groups:
+                                Each N = 2 case's probability `p` is the probability of navigating
+                                to a page in the first group, then from that page to the second
+                                group. That second probability is the transition probability,
+                                written trans(1 -> 2). The remaining chunk groups after the first
+                                pick: rem_g = groups - 1.
 
-                                p_x = a_rem/groups
-                                p_y = b_rem/groups
-                                p_z = o_groups/groups
+                                Route "clusters" can be configured to signal that users are more
+                                likely to navigate between pages in the same cluster. This changes
+                                the transition probability. When no clusters are configured:
 
-                                The chunk groups remaining after the first one has been picked
-                                rem_g = groups - 1
+                                trans(X -> X) = (a_rem - 1)/rem_g
+                                trans(X -> Y) = b_rem/rem_g
+                                trans(X -> Z) = o_groups/rem_g
+                                trans(Y -> X) = a_rem/rem_g
+                                trans(Y -> Y) = (b_rem - 1)/rem_g
+                                trans(Y -> Z) = o_groups/rem_g
+                                trans(Z -> X) = a_rem/rem_g
+                                trans(Z -> Y) = b_rem/rem_g
+                                trans(Z -> Z) = (o_groups - 1)/rem_g
+
+                                and the N = 2 cases reduce to:
+                                case X + X (p = (a_rem/groups) * ((a_rem - 1)/rem_g))
+                                case Y + Y (p = (b_rem/groups) * ((b_rem - 1)/rem_g))
+                                case Z + Z (p = (o_groups/groups) * ((o_groups - 1)/rem_g))
+                                case X + Y (p = (a_rem/groups) * (b_rem/rem_g) + (b_rem/groups) * (a_rem/rem_g))
+                                case X + Z (p = (a_rem/groups) * (o_groups/rem_g) + (o_groups/groups) * (a_rem/rem_g))
+                                case Y + Z (p = (b_rem/groups) * (o_groups/rem_g) + (o_groups/groups) * (b_rem/rem_g))
+
+                                X, Y and Z are three sets of chunk groups:
+                                    X = the a_rem groups that load only chunk A
+                                    Y = the b_rem groups that load only chunk B
+                                    Z = the o_groups groups that load both
+
+                                Two groups that sit in the same cluster form a pair. The table below
+                                counts pairs: each cell says how many pairs have one group in one set
+                                and the other group in another set. The diagonal cells (c_xx, c_yy,
+                                c_zz) count pairs where both groups are in the same set.
+
+                                            | X (a_rem) | Y (b_rem) | Z (overlap)
+                                    --------+-----------+-----------+------------
+                                    X a_rem |    c_xx   |    c_xy   |    c_xz
+                                    Y b_rem |    c_xy   |    c_yy   |    c_yz
+                                    Z overl |    c_xz   |    c_yz   |    c_zz
+
+                                Each row sum is the total number of pairs leaving that set:
+                                    paired_x = c_xx + c_xy + c_xz
+                                    paired_y = c_xy + c_yy + c_yz
+                                    paired_z = c_xz + c_yz + c_zz
+
+                                `cluster_navigation_probability` (= 0.6, `cnp` below) is the chance a
+                                navigation stays within a cluster.
+
+                                For a first group in set 1, trans(1 -> 2) can be calculated using
+                                the following probability tree:
+
+                                                    Will the navigation stay
+                                                       within a cluster?
+                                                    /                    \
+                                             yes (cnp)                 no (1 - cnp)
+                                                  /                        \
+                                       Does it go to set 2?         Does it go to set 2?
+                                                |                            |
+                                         c_12 / paired_1     non_paired_2 / (rem_g - paired_1)
+
+                                    trans(1 -> 2) = cnp       * (c_12         / paired_1)
+                                                  + (1 - cnp) * (non_paired_2 / (rem_g - paired_1))
+
+                                When set 1 == set 2, we subtract one from count_2 and non_paired_2.
+                                paired_1 is the number of groups that are paired with set 1 via a
+                                cluster.
 
                                 UNMERGED CASE (N = 2):
-                                case X + X (p = (a_rem/groups) * ((a_rem - 1)/rem_g)): size = a_size, requests = 1
-                                case Y + Y (p = (b_rem/groups) * ((b_rem - 1)/rem_g)): size = b_size, requests = 1
-                                case Z + Z (p = (o_groups/groups) * (o_groups - 1)/rem_g): size = a_size + b_size, requests = 2
-                                case X + Y (p = (a_rem/groups) * (b_rem/rem_g) + (b_rem/groups) * (a_rem/rem_g)): size = a_size + b_size, requests = 2
-                                case X + Z (p = (a_rem/groups) * (o_groups/rem_g) + (o_groups/groups) * (a_rem/rem_g)): size = a_size + b_size, requests = 2
-                                case Y + Z (p = (b_rem/groups) * (o_groups/rem_g) + (o_groups/groups) * (b_rem/rem_g)): size = a_size + b_size, requests = 2
+                                case X + X (p = (a_rem/groups) * trans(X -> X)): size = a_size, requests = 1
+                                case Y + Y (p = (b_rem/groups) * trans(Y -> Y)): size = b_size, requests = 1
+                                case Z + Z (p = (o_groups/groups) * trans(Z -> Z)): size = a_size + b_size, requests = 2
+                                case X + Y (p = (a_rem/groups) * trans(X -> Y) + (b_rem/groups) * trans(Y -> X)): size = a_size + b_size, requests = 2
+                                case X + Z (p = (a_rem/groups) * trans(X -> Z) + (o_groups/groups) * trans(Z -> X)): size = a_size + b_size, requests = 2
+                                case Y + Z (p = (b_rem/groups) * trans(Y -> Z) + (o_groups/groups) * trans(Z -> Y)): size = a_size + b_size, requests = 2
 
                                 MERGED CASE (N = 2):
-                                case X + X (p = (a_rem/groups) * ((a_rem - 1)/rem_g)): size = a_size, requests = 1
-                                case Y + Y (p = (b_rem/groups) * ((b_rem - 1)/rem_g)): size = b_size, requests = 1
-                                case Z + Z (p = (o_groups/groups) * (o_groups - 1)/rem_g): size = (a_size + b_size), requests = 1
-                                case X + Y (p = (a_rem/groups) * (b_rem/rem_g) + (b_rem/groups) * (a_rem/rem_g)): size = a_size + b_size, requests = 2
-                                case X + Z (p = (a_rem/groups) * (o_groups/rem_g) + (o_groups/groups) * (a_rem/rem_g)): size = a_size + (a_size + b_size), requests = 2
-                                case Y + Z (p = (b_rem/groups) * (o_groups/rem_g) + (o_groups/groups) * (b_rem/rem_g)): size = b_size + (a_size + b_size), requests = 2
+                                case X + X (p = (a_rem/groups) * trans(X -> X)): size = a_size, requests = 1
+                                case Y + Y (p = (b_rem/groups) * trans(Y -> Y)): size = b_size, requests = 1
+                                case Z + Z (p = (o_groups/groups) * trans(Z -> Z)): size = (a_size + b_size), requests = 1
+                                case X + Y (p = (a_rem/groups) * trans(X -> Y) + (b_rem/groups) * trans(Y -> X)): size = a_size + b_size, requests = 2
+                                case X + Z (p = (a_rem/groups) * trans(X -> Z) + (o_groups/groups) * trans(Z -> X)): size = a_size + (a_size + b_size), requests = 2
+                                case Y + Z (p = (b_rem/groups) * trans(Y -> Z) + (o_groups/groups) * trans(Z -> Y)): size = b_size + (a_size + b_size), requests = 2
 
                                 Request count is different in this case: Z + Z (better)
                                 Requests size is different (worse) in these cases: X + Z, Y + Z
 
-                                d_req_z_z = ((o_groups/groups) * (o_groups - 1)/rem_g) * (2 - 1)
-                                          = o_groups * (o_groups - 1) / (groups * rem_g)
-                                d_req_x_z = ((a_rem/groups) * (o_groups/rem_g) + (o_groups/groups) * (a_rem/rem_g)) * (2 - 2)
+                                d_req_z_z = ((o_groups/groups) * trans(Z -> Z)) * (2 - 1)
+                                          = (o_groups/groups) * trans(Z -> Z)
+                                d_req_x_z = ((a_rem/groups) * trans(X -> Z) + (o_groups/groups) * trans(Z -> X)) * (2 - 2)
                                           = 0
-                                d_req_y_z = ((b_rem/groups) * (o_groups/rem_g) + (o_groups/groups) * (b_rem/rem_g)) * (2 - 2)
+                                d_req_y_z = ((b_rem/groups) * trans(Y -> Z) + (o_groups/groups) * trans(Z -> Y)) * (2 - 2)
                                           = 0
 
-                                d_req(N = 2) = o_groups * (o_groups - 1) / (groups * rem_g)
+                                d_req(N = 2) = (o_groups/groups) * trans(Z -> Z)
 
-                                d_size_x_z = ((a_rem/groups) * (o_groups/rem_g) + (o_groups/groups) * (a_rem/rem_g)) * (a_size + b_size - (a_size + (a_size + b_size)))
-                                           = ((2 * a_rem * o_groups) / (groups * rem_g)) * (-a_size)
-                                           = -2 * a_rem * a_size * o_groups / (groups * rem_g)
-                                d_size_y_z = -2 * b_rem * b_size * o_groups / (groups * rem_g)
+                                d_size_x_z = ((a_rem/groups) * trans(X -> Z) + (o_groups/groups) * trans(Z -> X)) * (a_size + b_size - (a_size + (a_size + b_size)))
+                                           = ((a_rem/groups) * trans(X -> Z) + (o_groups/groups) * trans(Z -> X)) * (-a_size)
+                                           = -a_size * (a_rem * trans(X -> Z) + o_groups * trans(Z -> X)) / groups
+                                d_size_y_z = -b_size * (b_rem * trans(Y -> Z) + o_groups * trans(Z -> Y)) / groups
 
-                                d_size(N = 2) = -2 * (a_rem * a_size + b_rem * b_size) * o_groups / (groups * rem_g)
+                                d_size(N = 2) = -(a_size * (a_rem * trans(X -> Z) + o_groups * trans(Z -> X))
+                                                 + b_size * (b_rem * trans(Y -> Z) + o_groups * trans(Z -> Y))) / groups
 
                                 d(N = 2) = d_req(N = 2) * c_req + d_size(N = 2)
-                                         = (o_groups * (o_groups - 1) * c_req) / (groups * rem_g) - (2 * (a_rem * a_size + b_rem * b_size) * o_groups) / (groups * rem_g)
-                                         = (o_groups * (o_groups - 1) * c_req - 2 * (a_rem * a_size + b_rem * b_size) * o_groups) / (groups * rem_g)
+                                         = (o_groups * trans(Z -> Z) * c_req
+                                            - a_size * (a_rem * trans(X -> Z) + o_groups * trans(Z -> X))
+                                            - b_size * (b_rem * trans(Y -> Z) + o_groups * trans(Z -> Y))) / groups
                             */
 
                             /*
                                 d  = P(N = 1) * d(N = 1) + P(N = 2) * d(N = 2)
                             */
 
-                            /*
-                               Recall from above:
-                               d = d_req * c_req + d_size
-                               d_req = P(N = 1) * d_req(N = 1) + P(N = 2) * d_req(N = 2)
-
-                               `d_size` is always <= 0, so for d > 0, d_req * c_req must be
-                               positive:
-
-                               d > 0
-                               d_req * c_req > 0
-                               (P(N = 1) * o_groups / groups + P(N = 2) * o_groups * (o_groups - 1) / (groups * rem_g)) * c_req > 0
-                               P(N = 1) * o_groups / groups + P(N = 2) * o_groups * (o_groups - 1) / (groups * rem_g) > 0
-                               P(N = 1) * o_groups * rem_g + P(N = 2) * o_groups * (o_groups - 1) > 0
-                               o_groups * (P(N = 1) * rem_g + P(N = 2) * (o_groups - 1)) > 0
-                               o_groups > 0 && P(N = 1) * rem_g + P(N = 2) * (o_groups - 1) > 0
-                               o_groups > 0 && P(N = 1) * (groups - 1) + P(N = 2) * (o_groups - 1) > 0
-                               o_groups > 0 && groups >= 2
-                            */
-
-                            // It need to have some request count benefit, the
-                            // check for that has been derived above:
+                            // If there are no overlapping groups, there is no benefit to
+                            // merging - skip this process. Also, our code assumes that
+                            // more than one group requests these chunks. If it was just
+                            // one group requesting both it should already have been merged
+                            // in `grouped_chunk_items` above.
                             if o_groups == 0 || groups < 2 {
                                 continue;
                             }
@@ -465,16 +524,69 @@ pub async fn make_production_chunks(
                             // in `o_groups` would be a chunk group that requests both chunk items.
 
                             let mut is_priority_route = false;
+
+                            // Distinct pairs between the sets X (a_rem), Y (b_rem) and Z (overlap)
+                            // that are both in a cluster.
+                            let (mut c_xx, mut c_xy, mut c_xz, mut c_yy, mut c_yz, mut c_zz) =
+                                (0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
                             if let (Some(a), Some(b)) =
                                 (&candidate.chunk_groups, &other.chunk_groups)
                             {
-                                let o = &***a & &***b; // `o_groups`
+                                let o = &***a & &***b; // `o_groups` (Z)
 
                                 // if there is one chunk group in `o_groups` that is used by a
                                 // priority route, we should prioritise merging these two chunk
                                 // items.
                                 is_priority_route = !o.is_disjoint(&heuristics.priority_routes);
+
+                                if has_clusters {
+                                    let x = &***a - &o; // a_rem groups: load only chunk A
+                                    let y = &***b - &o; // b_rem groups: load only chunk B
+
+                                    // Map each cluster to the candidate groups it contains.
+                                    let mut cluster_groups: FxHashMap<u16, RoaringBitmap> =
+                                        FxHashMap::default();
+                                    for set in [&x, &y, &o] {
+                                        for index in set.iter() {
+                                            for &c in &heuristics.clusters[index as usize] {
+                                                cluster_groups.entry(c).or_default().insert(index);
+                                            }
+                                        }
+                                    }
+
+                                    // Groups sharing >= 1 cluster with `index`, deduped across
+                                    // clusters (excluding `index` itself) so each pair counts once.
+                                    let pairs_with = |index: u32| {
+                                        let mut p = RoaringBitmap::new();
+                                        for &c in &heuristics.clusters[index as usize] {
+                                            if let Some(groups) = cluster_groups.get(&c) {
+                                                p |= groups;
+                                            }
+                                        }
+                                        p.remove(index);
+                                        p
+                                    };
+
+                                    for index in x.iter() {
+                                        let p = pairs_with(index);
+                                        c_xx += (&p & &x).len() as f64;
+                                        c_xy += (&p & &y).len() as f64;
+                                        c_xz += (&p & &o).len() as f64;
+                                    }
+                                    for index in y.iter() {
+                                        let p = pairs_with(index);
+                                        c_yy += (&p & &y).len() as f64;
+                                        c_yz += (&p & &o).len() as f64;
+                                    }
+                                    for index in o.iter() {
+                                        c_zz += (&pairs_with(index) & &o).len() as f64;
+                                    }
+                                }
                             }
+
+                            let paired_x = c_xx + c_xy + c_xz;
+                            let paired_y = c_xy + c_yy + c_yz;
+                            let paired_z = c_xz + c_yz + c_zz;
 
                             let p1 = if is_priority_route {
                                 (default_p1 * priority_boost).min(1.0)
@@ -487,14 +599,55 @@ pub async fn make_production_chunks(
                             let o = o_groups as f64;
                             let groups = groups as f64;
                             let rem_g = rem_g as f64;
+                            let a_rem = a_rem as f64;
+                            let b_rem = b_rem as f64;
+                            let a_size = a_size as f64;
+                            let b_size = b_size as f64;
+
+                            let cluster_navigation_probability = 0.6;
+
+                            /* transition_probability(source -> dest): probability that, after landing on a page
+                            in the `source` set, the next navigation goes to the `dest` set.
+                            `cluster_navigation_probability` of the time it stays within a cluster
+                            (split across the source's pairs); the
+                            rest spreads over the non-paired groups. With no pairs it is a uniform hop.
+
+                            - pairs_to_dest: co-clustered pairs from source to dest
+                            - source_pairs: all co-clustered pairs leaving source (its row sum)
+                            - source_size: number of groups in the source set
+                            - dest_size: groups in the dest set (minus 1 if source == dest) */
+                            let transition_probability =
+                                |pairs_to_dest: f64,
+                                 source_pairs: f64,
+                                 source_size: f64,
+                                 dest_size: f64| {
+                                    if source_pairs == 0.0 {
+                                        // Source has no pairs: navigate uniformly.
+                                        return dest_size / rem_g;
+                                    }
+                                    let non_paired = rem_g * source_size - source_pairs;
+                                    if non_paired <= 0.0 {
+                                        // Every other group is paired: all weight on the pairs.
+                                        return pairs_to_dest / source_pairs;
+                                    }
+                                    let non_paired_to_dest =
+                                        dest_size * source_size - pairs_to_dest;
+                                    cluster_navigation_probability * (pairs_to_dest / source_pairs)
+                                        + (1.0 - cluster_navigation_probability)
+                                            * (non_paired_to_dest / non_paired)
+                                };
+
+                            let p_zz = transition_probability(c_zz, paired_z, o, o - 1.0);
+                            let p_zx = transition_probability(c_xz, paired_z, o, a_rem);
+                            let p_zy = transition_probability(c_yz, paired_z, o, b_rem);
+                            let p_xz = transition_probability(c_xz, paired_x, a_rem, o);
+                            let p_yz = transition_probability(c_yz, paired_y, b_rem, o);
 
                             let d1 = o / groups * c_req;
-                            let d2 = o
-                                * ((o - 1.0) * c_req
-                                    - 2.0
-                                        * (a_rem as f64 * a_size as f64
-                                            + b_rem as f64 * b_size as f64))
-                                / (groups * rem_g);
+                            let d2 = (o * p_zz * c_req
+                                - a_size * (a_rem * p_xz + o * p_zx)
+                                - b_size * (b_rem * p_yz + o * p_zy))
+                                / groups;
 
                             let value = p1 * d1 + p2 * d2;
                             // It need to have some runtime benefit of merging the chunks
