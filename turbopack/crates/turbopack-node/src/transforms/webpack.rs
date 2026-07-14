@@ -237,11 +237,12 @@ async fn webpack_loaders_executor(
 #[turbo_tasks::function]
 async fn loaders_changed(
     loaders: Vc<WebpackLoaderItems>,
-    origin_path: FileSystemPath,
+    project_path: FileSystemPath,
     asset_context: Vc<Box<dyn AssetContext>>,
     resolve_options_context: Vc<ResolveOptionsContext>,
 ) -> Result<Vc<Completion>> {
-    let options = resolve_options(origin_path.clone(), resolve_options_context);
+    let options = resolve_options(project_path.clone(), resolve_options_context);
+    let origin_path = project_path.clone().join("_")?;
 
     let completions = loaders
         .await?
@@ -356,9 +357,7 @@ impl WebpackLoadersProcessedAsset {
             // transitive dependencies) changes.
             let loaders_changed = loaders_changed(
                 *transform.loaders,
-                resource_fs_path.clone(),
-                // TODO should probably be config_tracing_module_context(*execution_context)
-                // instead
+                project_path.clone(),
                 *transform.config_tracing_context,
                 *transform.resolve_options_context,
             )
