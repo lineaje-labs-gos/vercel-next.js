@@ -95,6 +95,8 @@ struct SnapshotOptions {
     #[serde(default)]
     cjs_tree_shaking: bool,
     #[serde(default)]
+    cjs_scope_hoisting: bool,
+    #[serde(default)]
     scope_hoisting: bool,
     #[serde(default)]
     production_chunking: bool,
@@ -137,6 +139,7 @@ impl Default for SnapshotOptions {
             remove_unused_imports: false,
             remove_unused_exports: false,
             cjs_tree_shaking: false,
+            cjs_scope_hoisting: false,
             scope_hoisting: false,
             production_chunking: false,
             single_chunk: false,
@@ -411,6 +414,7 @@ async fn run_test_operation(resource: RcStr) -> Result<Vc<FileSystemPath>> {
                 ignore_dynamic_requests: true,
                 infer_module_side_effects: true,
                 cjs_tree_shaking: options.cjs_tree_shaking,
+                cjs_scope_hoisting: options.cjs_scope_hoisting,
                 enable_exports_info_inlining: true,
                 enable_rust_react_compiler: options
                     .enable_rust_react_compiler
