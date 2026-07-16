@@ -947,46 +947,6 @@ function bindingToApi(
       }
     }
 
-    // Webpack loader specifiers can be absolute paths, we need it to be relative for turbopack.
-    if (nextConfigSerializable.turbopack.rules) {
-      nextConfigSerializable.turbopack.rules = {
-        ...nextConfigSerializable.turbopack.rules,
-      }
-      const rules = nextConfigSerializable.turbopack.rules
-      function transformLoader(loader: string) {
-        return normalizePathOnWindows(
-          path.isAbsolute(loader)
-            ? './' + path.relative(projectPath, loader)
-            : loader
-        )
-      }
-      function transformRule(
-        rule: TurbopackLoaderItem | TurbopackRuleConfigItem
-      ): TurbopackLoaderItem | TurbopackRuleConfigItem {
-        if (typeof rule === 'string') {
-          return transformLoader(rule)
-        } else if ('loader' in rule) {
-          return {
-            ...rule,
-            loader: transformLoader(rule.loader),
-          }
-        } else {
-          return {
-            ...rule,
-            loaders: rule.loaders?.map(
-              (v) => transformRule(v) as TurbopackLoaderItem
-            ),
-          }
-        }
-      }
-
-      for (const key in nextConfigSerializable.turbopack.rules) {
-        rules[key] = Array.isArray(rules[key])
-          ? rules[key].map(transformRule)
-          : [transformRule(rules[key])]
-      }
-    }
-
     // cacheHandler can be an absolute path, we need it to be relative for turbopack.
     if (nextConfigSerializable.cacheHandler) {
       const resolvedCacheHandler = resolveCacheHandlerPathToFilesystem(
@@ -1026,6 +986,43 @@ function bindingToApi(
       const turbopack = { ...nextConfigSerializable.turbopack }
 
       if (turbopack.rules) {
+        // Webpack loader specifiers can be absolute paths, we need it to be relative for turbopack.
+        if (turbopack.rules) {
+          turbopack.rules = { ...turbopack.rules }
+          function transformLoader(loader: string) {
+            return normalizePathOnWindows(
+              path.isAbsolute(loader)
+                ? './' + path.relative(projectPath, loader)
+                : loader
+            )
+          }
+          function transformRule(
+            rule: TurbopackLoaderItem | TurbopackRuleConfigItem
+          ): TurbopackLoaderItem | TurbopackRuleConfigItem {
+            if (typeof rule === 'string') {
+              return transformLoader(rule)
+            } else if ('loader' in rule) {
+              return {
+                ...rule,
+                loader: transformLoader(rule.loader),
+              }
+            } else {
+              return {
+                ...rule,
+                loaders: rule.loaders?.map(
+                  (v) => transformRule(v) as TurbopackLoaderItem
+                ),
+              }
+            }
+          }
+
+          for (const key in turbopack.rules) {
+            turbopack.rules[key] = Array.isArray(turbopack.rules[key])
+              ? turbopack.rules[key].map(transformRule)
+              : [transformRule(turbopack.rules[key])]
+          }
+        }
+
         turbopack.rules = serializeTurbopackRules(turbopack.rules)
       }
 
