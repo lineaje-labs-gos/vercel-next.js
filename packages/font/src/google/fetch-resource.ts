@@ -17,10 +17,19 @@ export function fetchResource(
     const client = protocol === 'https:' ? https : http
     const timeout = isDev ? 3000 : 6000
 
+    // A proxy agent establishes its CONNECT tunnel before the request socket is
+    // assigned, so `req.setTimeout` below never fires against a hanging proxy
+    // (e.g. a captive portal whose ToS hasn't been accepted). Bound the agent's
+    // own timeout so that case is covered too.
+    const agent = getProxyAgent()
+    if (agent && timeout) {
+      ;(agent as unknown as { timeout?: number }).timeout = timeout
+    }
+
     const req = client.request(
       url,
       {
-        agent: getProxyAgent(),
+        agent,
         headers: {
           // The file format is based off of the user agent, make sure woff2 files are fetched
           'User-Agent':
