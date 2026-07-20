@@ -17,6 +17,9 @@ use turbo_tasks::{
 use crate::{FetchError, FetchResult, HttpResponse, HttpResponseBody};
 
 const MAX_CLIENTS: usize = 16;
+/// Number of times a transient fetch failure (connection error / timeout) is retried before giving
+/// up and surfacing the error to the caller.
+const MAX_FETCH_RETRIES: u32 = 3;
 static CLIENT_CACHE: LazyLock<Cache<ReadRef<FetchClientConfig>, reqwest::Client>> =
     LazyLock::new(|| Cache::new(MAX_CLIENTS));
 
@@ -34,12 +37,17 @@ pub struct FetchClientConfig {
     /// will be clamped to this value. This prevents pathologically short timeouts from causing an
     /// invalidation bomb. Defaults to 1 hour.
     pub min_cache_control: Duration,
+    /// Maximum time to wait for a connection to be established. Without this, an unreachable host
+    /// (offline, a captive portal that drops packets, a blocked endpoint) blocks compilation until
+    /// the OS-level connect timeout fires (~75s). Defaults to 3 seconds.
+    pub connect_timeout: Duration,
 }
 
 impl Default for FetchClientConfig {
     fn default() -> Self {
         Self {
             min_cache_control: Duration::from_secs(60 * 60),
+            connect_timeout: Duration::from_secs(3),
         }
     }
 }
@@ -68,7 +76,7 @@ impl FetchClientConfig {
 
     fn try_build_uncached_reqwest_client(&self) -> reqwest::Result<reqwest::Client> {
         #[allow(unused_mut)]
-        let mut builder = reqwest::Client::builder();
+        let mut builder = reqwest::Client::builder().connect_timeout(self.connect_timeout);
         #[cfg(any(target_os = "linux", all(windows, not(target_arch = "aarch64"))))]
         {
             use std::sync::Once;
@@ -169,9 +177,25 @@ impl FetchClientConfig {
 
             let response = {
                 let _span = duration_span!("fetch request", url = url_ref);
-                builder.send().await
-            }
-            .and_then(|r| r.error_for_status())?;
+                let mut attempt = 0;
+                loop {
+                    // A GET request without a body is always cloneable.
+                    let request = builder.try_clone().expect("request should be cloneable");
+                    match request.send().await.and_then(|r| r.error_for_status()) {
+                        Ok(response) => break response,
+                        Err(err)
+                            if attempt < MAX_FETCH_RETRIES
+                                && (err.is_connect() || err.is_timeout() || err.is_request()) =>
+                        {
+                            attempt += 1;
+                            tracing::warn!(
+                                "Failed to fetch {url_ref}, retrying ({attempt}/{MAX_FETCH_RETRIES})..."
+                            );
+                        }
+                        Err(err) => return Err(err),
+                    }
+                }
+            };
 
             let status = response.status().as_u16();
             let max_age = parse_cache_control(response.headers());

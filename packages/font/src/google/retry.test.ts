@@ -26,8 +26,8 @@ describe('next/font/google retry', () => {
     await expect(retry(fn, 3)).resolves.toBe('ok')
     expect(fn).toHaveBeenCalledTimes(3)
     expect(mockWarn.mock.calls.map((call) => call[0])).toEqual([
-      'Failed to reach Google Fonts, retrying (1/3)...',
-      'Failed to reach Google Fonts, retrying (2/3)...',
+      'Failed to fetch from Google Fonts, retrying (1/3)...',
+      'Failed to fetch from Google Fonts, retrying (2/3)...',
     ])
   })
 

@@ -10,7 +10,7 @@ export async function retry<T>(
     retries,
     onRetry(_e: unknown, attempt: unknown) {
       Log.warn(
-        `Failed to reach Google Fonts, retrying (${attempt}/${retries})...`
+        `Failed to fetch from Google Fonts, retrying (${attempt}/${retries})...`
       )
     },
     minTimeout: 100,
