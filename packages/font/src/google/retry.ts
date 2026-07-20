@@ -1,5 +1,6 @@
 // @ts-expect-error File exists
 import asyncRetry from 'next/dist/compiled/async-retry'
+// @ts-ignore
 import * as Log from 'next/dist/build/output/log'
 
 export async function retry<T>(
