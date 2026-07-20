@@ -23,6 +23,7 @@ import type {
   InstantValidationSamples,
   PrerenderStoreModernClient,
   PrerenderStoreModernRuntime,
+  PrerenderStoreModernServer,
   RequestStore,
   ValidationStoreClient,
   WorkUnitStore,
@@ -8102,6 +8103,7 @@ async function prerenderToStream(
         hmrRefreshHash: undefined,
         // We don't track vary params during initial prerender, only the final one
         varyParamsAccumulator: null,
+        runtimeDataAccessed: null,
       }
 
       // We're not going to use the result of this render because the only time it could be used
@@ -8136,6 +8138,7 @@ async function prerenderToStream(
         hmrRefreshHash: undefined,
         // We don't track vary params during initial prerender, only the final one
         varyParamsAccumulator: null,
+        runtimeDataAccessed: null,
       })
 
       const initialPrerenderOptions = {
@@ -8360,7 +8363,17 @@ async function prerenderToStream(
         finalStage: RenderStage.Static,
       })
 
-      const finalServerPayloadPrerenderStore: PrerenderStore = {
+      // Records runtime data accesses from the payload and render stores
+      // below into the RSC payload (as `u`), resolved `true` at the moment
+      // of first access so the fulfillment row is serialized at the stream
+      // position where it happened. Used when generating per-segment
+      // prefetch responses. Request data props (params, searchParams) are
+      // created while the RSC payload is constructed, under the payload
+      // store; both stores share the same promise so it observes accesses
+      // from both.
+      const runtimeDataAccessed = createPromiseWithResolvers<boolean>()
+
+      const finalServerPayloadPrerenderStore: PrerenderStoreModernServer = {
         type: 'prerender',
         phase: 'render',
         rootParams,
@@ -8386,6 +8399,7 @@ async function prerenderToStream(
         resumeDataCache,
         hmrRefreshHash: undefined,
         varyParamsAccumulator,
+        runtimeDataAccessed,
       }
 
       const shellByteLengthDeferred = createPromiseWithResolvers<
@@ -8407,6 +8421,13 @@ async function prerenderToStream(
       if (cachedNavigations) {
         staleTimeIterable = new StaleTimeIterable()
         finalServerPayload.s = staleTimeIterable
+      }
+
+      if (shouldGenerateStaticFlightData(workStore)) {
+        // Embed the runtime data access tracking in the payload so
+        // collectSegmentData can replay it per stage. Only needed when the
+        // Flight data will be decomposed into segment prefetches below.
+        finalServerPayload.u = runtimeDataAccessed.promise
       }
 
       const serverDynamicTracking = createDynamicTrackingState(
@@ -8433,6 +8454,7 @@ async function prerenderToStream(
         resumeDataCache,
         hmrRefreshHash: undefined,
         varyParamsAccumulator,
+        runtimeDataAccessed,
       })
 
       if (staleTimeIterable !== undefined) {
@@ -8483,11 +8505,12 @@ async function prerenderToStream(
 
         // FIXME(NAR-810): If we're already aborted due to Sync IO, there should be no need to
         // finish the accumulators. However, it seems like in `--debug-prerender`
-        // the stream will stay open if we don't close the iterables here.
+        // the stream will stay open if we don't settle these here.
         if (process.env.NODE_ENV === 'development') {
           if (staleTimeIterable !== undefined) {
             staleTimeIterable.close()
           }
+          runtimeDataAccessed.resolve(false)
           finishAccumulatingVaryParams(varyParamsAccumulator)
         }
       }
@@ -8575,6 +8598,9 @@ async function prerenderToStream(
           if (staleTimeIterable !== undefined) {
             staleTimeIterable.close()
           }
+          // Idempotent: a no-op if a runtime data access already resolved it
+          // `true`. The `false` row lands here, after all stage content.
+          runtimeDataAccessed.resolve(false)
           finishAccumulatingVaryParams(varyParamsAccumulator)
 
           shellByteLengthDeferred.resolve(
@@ -9382,6 +9408,7 @@ async function prerenderToStream(
         resumeDataCache: originalResumeDataCache,
         hmrRefreshHash: undefined,
         varyParamsAccumulator: null,
+        runtimeDataAccessed: null,
       }
 
       const errorRSCPayload = await workUnitAsyncStorage.run(

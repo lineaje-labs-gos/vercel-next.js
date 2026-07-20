@@ -129,6 +129,41 @@ export type SegmentPrefetchResponse = {
    * back in via `readVaryParams`.
    */
   rootVaryParams: VaryParamsIterable | null
+  /**
+   * The page's runtime-data-access flag (the page payload's `u`), forwarded
+   * from the staged decode of the page data: whether the prerender accessed
+   * a data source that would have resolved during a runtime prerender
+   * (cookies, headers, fallback params, searchParams, ...). The flag is
+   * monotonic (false → true, at most once), so a promise suffices; the
+   * client takes the settled value visible in its decode. Fulfilled `true`
+   * means a runtime prefetch would return more than this static response;
+   * pending or fulfilled `false` means it wouldn't. The answer is rewindable
+   * because the fulfillment row lands on the same side of the shell byte
+   * boundary (`a`) as the access it records: a decode truncated at `a` reads
+   * pending for a post-shell access, i.e. `false` for the shell variant.
+   *
+   * Tracking is page-global, so this lives on the response envelope, not on
+   * each segment. (A pending promise also costs Flight no abort listener on
+   * the render, unlike an async iterable, which holds one for as long as
+   * it's open.) Per-segment granularity comes from combining it with each
+   * segment's `isPartial`:
+   *
+   *   needsRuntimeRequest(segment) = (settled true) && (isPartial pending)
+   *
+   * A segment whose `isPartial` promise fulfilled is fully static, and a
+   * fully static segment gains nothing from a runtime request no matter what
+   * the page accessed. Conversely, a partial segment on a page that accessed
+   * no runtime data also reads `false`: its holes come from sources that hang
+   * in a runtime prerender too (`io()`, `connection()`, uncached IO), and are
+   * only filled by the navigation-time dynamic request.
+   *
+   * The derived value must never falsely claim that no runtime request is
+   * needed, so every fallback is conservative: pages that carry no `u`
+   * (legacy render paths) forward an already-resolved `true`. Unlike the
+   * build-time inlining hints, this is computed per render and may change
+   * between responses for the same build.
+   */
+  needsRuntimeRequest: Promise<boolean>
 }
 
 export type SegmentPrefetch = {
@@ -140,6 +175,10 @@ export type SegmentPrefetch = {
    * pending `isPartial` as "partial". The fulfillment row, when there is one,
    * flushes past the shell boundary, so a truncated shell decode also reads
    * as partial: correct, since a shell has holes by construction.
+   *
+   * This monotonic pending → fulfilled encoding also serves as the
+   * per-segment half of the needs-runtime-request derivation — see
+   * `SegmentPrefetchResponse['needsRuntimeRequest']`.
    */
   isPartial: Promise<void>
   /**
@@ -254,7 +293,13 @@ export async function collectSegmentData(
   // `a` field): a byte offset into fullPageDataBuffer marking the end of the
   // page's shell stage, null if the shell is identical to the full static
   // response, or undefined if the render wasn't staged (no shell exists).
+  //
+  // And it tells us whether the render accessed runtime data (cookies,
+  // headers, fallback params, searchParams, ...): the settled value of the
+  // page's embedded access flag (its `u` field). Conservatively true when
+  // the page carries no flag (legacy render paths) or the decode fails.
   let pageShellByteLength: number | null | undefined = undefined
+  let runtimeDataAccessed = true
   try {
     const pagePayload: InitialRSCPayload = await createFromReadableStream(
       // Use a stream that never closes so pending references (dynamic
@@ -270,6 +315,9 @@ export async function collectSegmentData(
     // it resolves. undefined means the render wasn't staged (no shell).
     if (pagePayload.a !== undefined) {
       pageShellByteLength = await pagePayload.a
+    }
+    if (pagePayload.u !== undefined) {
+      runtimeDataAccessed = readRuntimeDataAccessed(pagePayload.u)
     }
   } catch {}
 
@@ -343,6 +391,7 @@ export async function collectSegmentData(
         prefetchInlining={prefetchInlining}
         hints={hints}
         isUpgradeableISRFallback={isUpgradeableISRFallback}
+        runtimeDataAccessed={runtimeDataAccessed}
         shellStageRelease={release.promise}
       />,
       clientModules,
@@ -463,6 +512,12 @@ export async function collectPrefetchHints(
   const staleTimeIterable =
     initialRSCPayload.s ?? createStaleTimeIterable(staleTime)
 
+  // The page's runtime-data-access flag, forwarded into each segment
+  // response's `needsRuntimeRequest`. This pass only measures sizes, so a
+  // conservative already-resolved `true` stands in when the page carries
+  // no `u`.
+  const needsRuntimeRequest = initialRSCPayload.u ?? Promise.resolve(true)
+
   // This pass only measures gzip sizes for inlining hints, so nothing is
   // staged (each response's `a` falls out as the no-shell sentinel, 0), but
   // the responses are byte-identical in shape to the real ones — the point
@@ -482,6 +537,7 @@ export async function collectPrefetchHints(
     null,
     // Fallback-ness doesn't affect size, so pass false.
     false,
+    needsRuntimeRequest,
     shellStageRelease
   )
   const headGzipSize = await getGzipSize(headBuffer)
@@ -512,6 +568,7 @@ export async function collectPrefetchHints(
     headInlineState,
     subtreeHasRuntimePrefetch,
     rootVaryParamsIterable,
+    needsRuntimeRequest,
     shellStageRelease
   )
 
@@ -531,6 +588,10 @@ export async function collectPrefetchHints(
 // part of one request will be the same during a subsequent request, given
 // the same build ID. There's no skew to worry about as long as the build
 // itself is consistent.
+//
+// (There are some exceptions: PrefetchHint.ShouldAttemptStaticPrefetch is
+// derived from each render's outcome in collectSegmentDataImpl and may differ
+// between responses for the same build.)
 //
 // In the Segment Cache, we split page prefetches into multiple requests so
 // that each one can be cached and deduped independently. However, some
@@ -567,6 +628,7 @@ async function collectPrefetchHintsImpl(
   headInlineState: { inlined: boolean },
   routeHasRuntimePrefetch: boolean,
   rootVaryParamsIterable: VaryParamsIterable | null,
+  needsRuntimeRequest: Promise<boolean>,
   shellStageRelease: Promise<boolean>
 ): Promise<{
   node: PrefetchHints
@@ -599,6 +661,7 @@ async function collectPrefetchHintsImpl(
       null,
       // Size-measurement pass only; fallback-ness is irrelevant here.
       false,
+      needsRuntimeRequest,
       shellStageRelease
     )
     currentGzipSize = await getGzipSize(buffer)
@@ -671,6 +734,7 @@ async function collectPrefetchHintsImpl(
       headInlineState,
       routeHasRuntimePrefetch,
       rootVaryParamsIterable,
+      needsRuntimeRequest,
       shellStageRelease
     )
 
@@ -818,6 +882,7 @@ async function PrefetchTreeData({
   prefetchInlining,
   hints,
   isUpgradeableISRFallback,
+  runtimeDataAccessed,
   shellStageRelease,
 }: {
   isClientParamParsingEnabled: boolean
@@ -830,6 +895,7 @@ async function PrefetchTreeData({
   prefetchInlining: boolean
   hints: PrefetchHints | null
   isUpgradeableISRFallback: boolean
+  runtimeDataAccessed: boolean
   shellStageRelease: Promise<boolean>
 }): Promise<RootTreePrefetch | null> {
   // We're currently rendering a Flight response for the route tree prefetch.
@@ -867,6 +933,13 @@ async function PrefetchTreeData({
   const staleTimeIterable =
     initialRSCPayload.s ?? createStaleTimeIterable(staleTime)
 
+  // The page's runtime-data-access flag, forwarded into each segment
+  // response's `needsRuntimeRequest`. When the page carries no `u` (e.g.
+  // legacy render paths), wrap the flag the caller read from the warm-up
+  // decode in an already-resolved promise.
+  const needsRuntimeRequest =
+    initialRSCPayload.u ?? Promise.resolve(runtimeDataAccessed)
+
   // Only applies when prefetch inlining is enabled — the client doesn't
   // know to look for the head inside a page's response otherwise.
   const headIsInlined =
@@ -896,6 +969,8 @@ async function PrefetchTreeData({
     headBundle,
     rootVaryParamsIterable,
     isUpgradeableISRFallback,
+    runtimeDataAccessed,
+    needsRuntimeRequest,
     shellStageRelease
   )
 
@@ -914,6 +989,7 @@ async function PrefetchTreeData({
           clientModules,
           null,
           isUpgradeableISRFallback,
+          needsRuntimeRequest,
           shellStageRelease
         )
       )
@@ -951,6 +1027,11 @@ function collectSegmentDataImpl(
   headBundle: SegmentBundleNode | null,
   rootVaryParamsIterable: VaryParamsIterable | null,
   isUpgradeableISRFallback: boolean,
+  // The settled value, for PrefetchHint.ShouldAttemptStaticPrefetch. The
+  // promise that follows carries the stage-positioned encoding for the
+  // segment responses.
+  runtimeDataAccessed: boolean,
+  needsRuntimeRequest: Promise<boolean>,
   shellStageRelease: Promise<boolean>
 ): TreePrefetch {
   // Union the hints already embedded in the FlightRouterState with the
@@ -964,9 +1045,20 @@ function collectSegmentDataImpl(
   // relevant for the initial RSC payload baked into HTML — the /_tree
   // response produced here always has correct hints, so the client should
   // never see InliningHintsStale in a /_tree response.
-  const prefetchHints =
+  let prefetchHints =
     ((route[4] ?? 0) | (hintTree !== null ? hintTree.hints : 0)) &
     ~PrefetchHint.InliningHintsStale
+
+  if (!runtimeDataAccessed) {
+    // The render didn't access any data source that would resolve during a
+    // runtime prerender, so a static prefetch is expected to be as complete
+    // as a runtime prefetch — the client should attempt it. Advisory only —
+    // the tracking is page-global, so the same value goes on every node (the
+    // per-segment refinement isn't knowable at tree-serialization time; the
+    // client derives it from the segment responses' `needsRuntimeRequest`
+    // and per-segment `isPartial`).
+    prefetchHints |= PrefetchHint.ShouldAttemptStaticPrefetch
+  }
 
   // The params this segment's own output varies on, forwarded into its
   // response as-is. Root params are forwarded separately, once per response.
@@ -1028,6 +1120,7 @@ function collectSegmentDataImpl(
             clientModules,
             bundle,
             isUpgradeableISRFallback,
+            needsRuntimeRequest,
             shellStageRelease
           )
         )
@@ -1074,6 +1167,8 @@ function collectSegmentDataImpl(
       headBundle,
       rootVaryParamsIterable,
       isUpgradeableISRFallback,
+      runtimeDataAccessed,
+      needsRuntimeRequest,
       shellStageRelease
     )
     if (slotMetadata === null) {
@@ -1136,6 +1231,7 @@ async function renderSegmentPrefetch(
   clientModules: ManifestNode,
   bundle: SegmentBundleNode | null,
   isUpgradeableISRFallback: boolean,
+  needsRuntimeRequest: Promise<boolean>,
   shellStageRelease: Promise<boolean>
 ): Promise<[SegmentRequestKey, Buffer]> {
   const streamInfoStage = createPromiseWithResolvers<void>()
@@ -1153,27 +1249,28 @@ async function renderSegmentPrefetch(
       // list, which skips a cache entry for the slot.
       data.push(null)
     } else {
+      // We can determine if a segment contains only partial data if it takes
+      // longer than a task to encode, because dynamic data is encoded as an
+      // infinite promise. We must do this in a separate Flight prerender from
+      // the one that actually generates the prefetch stream because we need
+      // to include the result in the stream itself.
+      const contentIsComplete = new Promise<void>(async (resolve) => {
+        // Wait for the input stream to be fully unblocked before checking if
+        // the data can be decoded synchronously.
+        await streamInfoStage.promise
+
+        // If the data is fully static, this will resolve synchronously.
+        // Otherwise, the promise stays unresolved forever, and so does
+        // whatever field it's encoded into in the outer response.
+        await prerender(elementRsc, clientModules, {
+          filterStackFrame,
+          onError() {},
+        })
+        resolve()
+      })
       data.push({
         rsc: elementRsc,
-        // We can determine if a segment contains only partial data if it takes
-        // longer than a task to encode, because dynamic data is encoded as an
-        // infinite promise. We must do this in a separate Flight prerender from
-        // the one that actually generates the prefetch stream because we need
-        // to include `isPartial` in the stream itself.
-        isPartial: new Promise(async (resolve) => {
-          // Wait for the input stream to be fully unblocked before checking if
-          // the data can be decoded synchronously.
-          await streamInfoStage.promise
-
-          // If the data is fully static, this will resolve synchronously.
-          // Otherwise, `isPartial` will be encoded as an unresolved promise in
-          // the outer response, which the client will interpret as partial.
-          await prerender(elementRsc, clientModules, {
-            filterStackFrame,
-            onError() {},
-          })
-          resolve()
-        }),
+        isPartial: contentIsComplete,
         staleTime,
         varyParams: node.varyParams,
       })
@@ -1199,6 +1296,7 @@ async function renderSegmentPrefetch(
     isUpgradeableISRFallback,
     a: shellByteOffset.promise,
     rootVaryParams,
+    needsRuntimeRequest,
   }
 
   const abortController = new AbortController()
@@ -1258,24 +1356,31 @@ async function renderSegmentPrefetch(
   // enqueues it into the input decode, the render has emitted all of it.
   await waitAtLeastOneReactRenderTask()
 
-  // Resolve `a`: null when the shell is the whole response — either the page
-  // said so (shellIsFullResponse), or no bytes flushed after the shell stage,
-  // which is the same thing at the segment grain. Otherwise it's the boundary
-  // offset. (A numeric boundary is always a strict prefix, never == total.)
-  if (shellIsFullResponse || byteLengthAfterShellStage === totalByteLength) {
+  // Resolve `a`: null when the page said its shell is the whole response
+  // (shellIsFullResponse) — then so is every segment's. Otherwise resolve the
+  // measured boundary, even if no segment *content* follows it: the
+  // stage-dependent metadata (`staleTime`, `needsRuntimeRequest`) always
+  // lands its post-shell values and completion rows after this point, so a
+  // truncated decode is meaningful for every segment of a staged page. When
+  // the page wasn't staged at all, the release resolved before any bytes
+  // flushed and the measured boundary falls out as 0, the "no shell"
+  // sentinel.
+  if (shellIsFullResponse) {
     shellByteOffset.resolve(null)
   } else {
     shellByteOffset.resolve(byteLengthAfterShellStage)
   }
 
-  // Now write the stream metadata (`a` and the `isPartial` promises). This is
-  // gated behind streamInfoStage so it lands strictly after the boundary
-  // measurement above — metadata bytes must not count as segment data.
+  // Now write the stream metadata (`a`, the `isPartial` promises, and a
+  // post-shell `needsRuntimeRequest` resolution). This is gated behind
+  // streamInfoStage so it lands strictly after the boundary measurement
+  // above — the post-shell values must not count as (or leak into) the
+  // shell prefix.
   streamInfoStage.resolve()
 
   // Wait for the metadata rows to flush before halting — two macrotasks,
   // each a distinct hop:
-  //   1. streamInfoStage unblocks the isPartial probe renders; a static
+  //   1. streamInfoStage unblocks the completeness probe renders; a static
   //      segment's probe resolves within this task (a partial one never does,
   //      which is how it stays pending → read as partial).
   //   2. those resolutions (and the already-resolved `a`) ping the render,
@@ -1288,6 +1393,43 @@ async function renderSegmentPrefetch(
   abortController.abort()
   return [responseKey, Buffer.concat(await chunksPromise)]
 }
+
+/**
+ * Reads the page's runtime-data-access flag (the payload's `u`) from a decode
+ * of the fully-settled page buffer. Because every byte is present, the
+ * promise's row (if the render emitted one) is already visible on its
+ * thenable status, so this never blocks — the same trick the client cache
+ * uses to read staleTime from a buffered response.
+ *
+ * - fulfilled: the recorded flag.
+ * - pending: `false`. A successful render always settles the flag (prerender
+ *   completion resolves `false`), so a pending row can only appear in an
+ *   aborted render's buffer, where it means no access was recorded before
+ *   the abort.
+ * - rejected: `true`, conservatively — an abort errors rows that were still
+ *   pending when it happened.
+ */
+function readRuntimeDataAccessed(
+  runtimeDataAccessed: Promise<boolean>
+): boolean {
+  const promise = runtimeDataAccessed as Promise<boolean> & {
+    status?: string
+    value?: boolean
+  }
+  // Force Flight to unwrap a received-but-not-yet-settled row.
+  promise.then(ignoreChunk, ignoreChunk)
+  switch (promise.status) {
+    case 'fulfilled':
+      return promise.value === true
+    case 'rejected':
+      return true
+    case undefined:
+    default:
+      return false
+  }
+}
+
+function ignoreChunk() {}
 
 // Wraps a known staleTime value in the same async-iterable shape as the page
 // response's `s`, so segment responses carry staleTime uniformly (and

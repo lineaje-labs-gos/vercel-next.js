@@ -152,6 +152,30 @@ export interface PrerenderStoreModernServer
   readonly type: 'prerender'
 
   readonly stagedRendering: StagedRenderingController | null
+
+  /**
+   * When not null, records whether the render has accessed a data source
+   * that hangs during a static prerender but would resolve during a runtime
+   * prerender — cookies, headers, fallback params, searchParams, and cache
+   * entries excluded only from static prerenders. Call sites go through
+   * `trackRuntimeDataAccessed`, which resolves the promise `true` on the
+   * first access; it's resolved `false` when the prerender completes without
+   * one. Promise resolution is idempotent, so the flag is monotonic with no
+   * extra state.
+   *
+   * The promise is embedded in the RSC payload (`InitialRSCPayload['u']`)
+   * so the fulfillment row's stream position records the stage the access
+   * happened in; the per-segment prefetch encoding (`collectSegmentData`)
+   * extracts it from the page data to tell the client whether a runtime
+   * prefetch request could be skipped. Tracking is page-global: an access
+   * anywhere in the page poisons all segments (per-segment granularity is
+   * recovered downstream for segments whose content is provably complete).
+   * Shared between the payload prerender store and the render store because
+   * request-data props are created during payload construction, before the
+   * render store exists. Null for warmup, route-handler, and error prerender
+   * stores.
+   */
+  readonly runtimeDataAccessed: PromiseWithResolvers<boolean> | null
 }
 
 export interface PrerenderStoreModernRuntime
