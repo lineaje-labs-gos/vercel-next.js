@@ -189,7 +189,8 @@ impl FetchClientConfig {
                         {
                             attempt += 1;
                             tracing::warn!(
-                                "Failed to fetch {url_ref}, retrying ({attempt}/{MAX_FETCH_RETRIES})..."
+                                "Failed to fetch {url_ref}, retrying \
+                                 ({attempt}/{MAX_FETCH_RETRIES})..."
                             );
                         }
                         Err(err) => return Err(err),
