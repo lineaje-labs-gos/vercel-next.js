@@ -5,7 +5,7 @@ import { getProxyAgent } from './get-proxy-agent'
 /**
  * Makes a simple GET request and returns the entire response as a Buffer.
  * - Throws if the response status is not 200.
- * - Applies a 3000 ms timeout when `isDev` is `true`.
+ * - Applies a timeout so a hanging request can't block compilation forever.
  */
 export function fetchResource(
   url: string,
@@ -15,7 +15,7 @@ export function fetchResource(
   return new Promise((resolve, reject) => {
     const { protocol } = new URL(url)
     const client = protocol === 'https:' ? https : http
-    const timeout = isDev ? 3000 : undefined
+    const timeout = isDev ? 3000 : 6000
 
     const req = client.request(
       url,

@@ -1,9 +1,12 @@
 import nextFontGoogleFontLoader from './loader'
 import { fetchResource } from './fetch-resource'
+import * as Log from 'next/dist/build/output/log'
 
 jest.mock('./fetch-resource')
+jest.mock('next/dist/build/output/log')
 
 const mockFetchResource = fetchResource as jest.Mock
+const mockLogError = Log.error as jest.Mock
 
 describe('next/font/google loader', () => {
   afterEach(() => {
@@ -147,5 +150,43 @@ describe('next/font/google loader', () => {
         )
       }
     )
+  })
+
+  describe('when Google Fonts is unreachable', () => {
+    it('falls back to a local font in dev instead of failing', async () => {
+      mockFetchResource.mockRejectedValue(new Error('getaddrinfo ENOTFOUND'))
+      const { css } = await nextFontGoogleFontLoader({
+        functionName: 'Inter',
+        // Unique weight so the URL doesn't collide with the cssCache warmed by
+        // the fixtures above.
+        data: [{ weight: '500', adjustFontFallback: false, subsets: [] }],
+        emitFontFile: jest.fn(),
+        resolve: jest.fn(),
+        loaderContext: {} as any,
+        isDev: true,
+        isServer: true,
+        variableName: 'myFont',
+      })
+      expect(css).toContain("font-family: 'Inter Fallback'")
+      expect(mockLogError).toHaveBeenCalledWith(
+        expect.stringContaining('Using fallback font instead')
+      )
+    })
+
+    it('throws during build so the failure is not silently shipped', async () => {
+      mockFetchResource.mockRejectedValue(new Error('getaddrinfo ENOTFOUND'))
+      await expect(
+        nextFontGoogleFontLoader({
+          functionName: 'Inter',
+          data: [{ weight: '600', adjustFontFallback: false, subsets: [] }],
+          emitFontFile: jest.fn(),
+          resolve: jest.fn(),
+          loaderContext: {} as any,
+          isDev: false,
+          isServer: true,
+          variableName: 'myFont',
+        })
+      ).rejects.toThrow()
+    })
   })
 })
