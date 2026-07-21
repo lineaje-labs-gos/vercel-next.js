@@ -259,6 +259,13 @@ export interface NextJsHotReloaderInterface {
    * and App Router clients that don't have Cache Components enabled.
    */
   sendToLegacyClients(action: HmrMessageSentToBrowser): void
+  /**
+   * The hash of the most recent server component change, or `undefined` if no
+   * server component change has occurred yet. In dev, this is included in `"use
+   * cache"` cache keys so that cached entries are revalidated after an edit,
+   * for every client, regardless of whether it runs the HMR client.
+   */
+  getServerComponentsHmrRefreshHash(): string | undefined
   setCacheStatus(status: ServerCacheStatus, htmlRequestId: string): void
   setReactDebugChannel(
     debugChannel: ReactDebugChannelForBrowser,

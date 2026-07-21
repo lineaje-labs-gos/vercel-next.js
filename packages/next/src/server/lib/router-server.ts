@@ -245,6 +245,18 @@ export async function initialize(opts: {
       filterInternalHeaders(req.headers)
     }
 
+    if (development) {
+      // Attach the current server components HMR refresh hash to the request so
+      // the in-process render can include it in `"use cache"` cache keys,
+      // revalidating cached entries after an edit for every client, cookieless
+      // requests included.
+      addRequestMeta(
+        req,
+        'hmrRefreshHash',
+        development.bundler.hotReloader.getServerComponentsHmrRefreshHash()
+      )
+    }
+
     if (opts.dev && req.url) {
       if (config.experimental.requestInsights) {
         process.env.__NEXT_REQUEST_INSIGHTS = 'true'
