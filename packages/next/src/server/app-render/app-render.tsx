@@ -5875,6 +5875,14 @@ function createAsyncApiPromises(
   }
 }
 
+// Edge runtime does not implement `module`, which `patch-error-inspect` needs.
+const logErrorWithSourceMappedStack =
+  process.env.NEXT_RUNTIME === 'edge' || process.env.NODE_ENV === 'production'
+    ? console.error
+    : (
+        require('../patch-error-inspect') as typeof import('../patch-error-inspect')
+      ).logErrorWithSourceMappedStack
+
 /**
  * Logs the given messages, and sends the error instances to the browser as an
  * RSC stream, where they can be deserialized and logged (or otherwise presented
@@ -5895,7 +5903,11 @@ async function logMessagesAndSendErrorsToBrowser(
     // Log the error to the CLI. Prevent the logs from being dimmed, which we
     // apply for other logs during the spawned validation.
     consoleAsyncStorage.exit(() => {
-      console.error(message)
+      if (message instanceof Error) {
+        logErrorWithSourceMappedStack(message)
+      } else {
+        console.error(message)
+      }
     })
 
     // Error instances are also sent to the browser. We're currently using a

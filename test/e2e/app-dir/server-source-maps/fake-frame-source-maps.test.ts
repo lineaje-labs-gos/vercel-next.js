@@ -363,6 +363,46 @@ describe('app-dir - server source maps - fake frame source maps', () => {
         session.close()
       }
     })
+
+    it('errors logged to an attached inspector have sourcemapped stacks', async () => {
+      // The same errors are sourcemapped when printed to the terminal, but an
+      // attached inspector (e.g. the DevTools console) receives the error
+      // object and displays its raw `stack`.
+      const target = await findServerInspectorTarget()
+      const session = await CDPSession.connect(target.webSocketDebuggerUrl)
+      try {
+        const errorLogs: string[] = []
+        session.onEvent = (method, params) => {
+          if (method === 'Runtime.consoleAPICalled') {
+            for (const arg of params.args ?? []) {
+              if (
+                arg.subtype === 'error' &&
+                typeof arg.description === 'string'
+              ) {
+                errorLogs.push(arg.description)
+              }
+            }
+          }
+        }
+        await session.send('Runtime.enable')
+
+        await next.render('/rsc-uncached-data')
+
+        let log: string | undefined
+        await retry(async () => {
+          log = errorLogs.find((description) =>
+            description.includes('uncached data during prerendering')
+          )
+          expect(log).toBeDefined()
+        }, 10_000)
+
+        expect(log).toMatch(
+          /at Page \([^)]*app\/rsc-uncached-data\/page\.js:4:\d+\)/
+        )
+      } finally {
+        session.close()
+      }
+    })
   } else {
     it('server chunk source maps are resolvable by an attached debugger', async () => {
       await next.render('/rsc-error-log')

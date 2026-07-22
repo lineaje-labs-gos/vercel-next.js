@@ -347,13 +347,89 @@ function getSourcemappedFrameIfPossible(
   }
 }
 
+/**
+ * Errors whose `stack` was already source mapped (e.g. by
+ * `getSourceMappedStack`) keep the unresolved stack under this symbol so that
+ * the terminal formatter can still resolve it itself to attach a code frame.
+ * Registered globally because this module is compiled both into the server
+ * runtime bundles and into `next/dist/server`.
+ */
+export const kUnsourcemappedStackTrace = Symbol.for(
+  'next.unsourcemappedStackTrace'
+)
+
+/**
+ * Resolves the stack frames of a stack trace string to their original source
+ * locations, leaving lines that cannot be resolved untouched.
+ *
+ * Unlike the terminal formatter, the result contains no code frame and no
+ * ANSI escapes, so it is suitable for `error.stack`, which is also consumed
+ * outside the terminal (an attached inspector, error tracking).
+ */
+export function getSourceMappedStack(stack: string): string {
+  const sourceMapCache: SourceMapCache = new Map()
+  return stack
+    .split('\n')
+    .map((line) => {
+      const [frame] = parseStack(line)
+      if (frame === undefined || frame.file === null) {
+        return line
+      }
+      const { stack: mappedFrame } = getSourcemappedFrameIfPossible(
+        frame as SourcemappableStackFrame,
+        sourceMapCache,
+        { colors: false }
+      )
+      if (mappedFrame.file === frame.file) {
+        return line
+      }
+      return frameToString(
+        mappedFrame.methodName,
+        mappedFrame.file,
+        mappedFrame.line1,
+        mappedFrame.column1
+      )
+    })
+    .join('\n')
+}
+
+/**
+ * Logs the error with its stack frames resolved to their original source
+ * locations. The terminal formatter already does this on its own, but other
+ * consumers of the logged error object (e.g. an attached inspector showing
+ * the console entry) display `error.stack` as-is, virtual frame URLs and all.
+ * The stack is only swapped for the duration of the log so that the error
+ * object itself is unchanged for other consumers, e.g. when it is serialized
+ * to the browser afterwards.
+ */
+export function logErrorWithSourceMappedStack(error: Error): void {
+  const stack = error.stack
+  if (typeof stack !== 'string') {
+    console.error(error)
+    return
+  }
+  const carrier = error as { [kUnsourcemappedStackTrace]?: string }
+  carrier[kUnsourcemappedStackTrace] = stack
+  error.stack = getSourceMappedStack(stack)
+  try {
+    console.error(error)
+  } finally {
+    error.stack = stack
+    delete carrier[kUnsourcemappedStackTrace]
+  }
+}
+
 function parseAndSourceMap(
   error: Error,
   inspectOptions: util.InspectOptions
 ): string {
   const showIgnoreListed = process.env.__NEXT_SHOW_IGNORE_LISTED === 'true'
   // We overwrote Error.prepareStackTrace earlier so error.stack is not sourcemapped.
-  let unparsedStack = String(error.stack)
+  let unparsedStack = String(
+    (error as { [kUnsourcemappedStackTrace]?: string })[
+      kUnsourcemappedStackTrace
+    ] ?? error.stack
+  )
   // We could just read it from `error.stack`.
   // This works around cases where a 3rd party `Error.prepareStackTrace` implementation
   // doesn't implement the name computation correctly.
