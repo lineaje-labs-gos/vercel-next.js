@@ -21,6 +21,7 @@ import { HMR_MESSAGE_SENT_TO_BROWSER } from './hot-reloader-types'
 import type {
   Update as TurbopackUpdate,
   Endpoint,
+  ServerChanged,
   WrittenEndpoint,
   TurbopackResult,
   Project,
@@ -355,26 +356,6 @@ function getSourceMapURLFromTurbopack(
   // `SourceMapAsset::path`). Encode through `pathToFileURL` so any special
   // characters in the path are escaped into a well-formed `file:` URL.
   return pathToFileURL(scriptPath + '.map').href
-}
-
-/**
- * A digest of the endpoint's compiled server-side output. `writeToDisk()` is
- * incremental, so calling it when nothing has changed is cheap and returns
- * the same content hashes. Returns null when the output can't be computed
- * (e.g. the endpoint fails to build).
- */
-async function getServerContentDigest(
-  endpoint: Endpoint
-): Promise<string | null> {
-  try {
-    const { serverPaths } = await endpoint.writeToDisk()
-    return serverPaths
-      .map(({ path, contentHash }) => `${path}:${contentHash}`)
-      .sort()
-      .join('\n')
-  } catch {
-    return null
-  }
 }
 
 export async function createHotReloaderTurbopack(
@@ -932,8 +913,12 @@ export async function createHotReloaderTurbopack(
     endpoint: Endpoint,
     createMessage: (
       change: TurbopackResult,
-      hash: string
-    ) => Promise<HmrMessageSentToBrowser> | HmrMessageSentToBrowser | void,
+      hash: string,
+      contentChanged: boolean
+    ) =>
+      | Promise<HmrMessageSentToBrowser | void>
+      | HmrMessageSentToBrowser
+      | void,
     onError?: (
       error: Error
     ) => Promise<HmrMessageSentToBrowser> | HmrMessageSentToBrowser | void
@@ -955,24 +940,33 @@ export async function createHotReloaderTurbopack(
       // initial build, and possibly coalescing several changes into one
       // emission — so emissions can't be counted directly. Instead, compare
       // the entry's compiled output and only advance the hash when it
-      // actually changed.
-      let contentDigest = await getServerContentDigest(endpoint)
+      // actually changed. Client-side output can't affect cached server
+      // data, so client subscriptions never advance the hash.
+      let contentHash =
+        side === 'server' ? await endpoint.serverContentHash() : null
 
       for await (const change of changed) {
         processIssues(currentEntryIssues, key, change, false, true)
-        const nextContentDigest = await getServerContentDigest(endpoint)
-        // When the digest can't be computed (null), err on the side of
-        // invalidating. An empty digest means the entry was removed; that
-        // can't affect other entries' cached data, and its own entries are
-        // unreachable.
-        if (
-          nextContentDigest === null ||
-          (nextContentDigest !== contentDigest && nextContentDigest !== '')
-        ) {
-          contentDigest = nextContentDigest
-          hmrHash++
+        let contentChanged = false
+        if (side === 'server') {
+          // A null hash means the entry has no compiled output (it was
+          // removed, or it failed to build); that can't affect other
+          // entries' cached data, and its own entries are unreachable.
+          const nextContentHash =
+            (change as TurbopackResult<ServerChanged>).contentHash ?? null
+          if (nextContentHash !== null && nextContentHash !== contentHash) {
+            contentChanged = true
+            hmrHash++
+          }
+          if (nextContentHash !== null) {
+            contentHash = nextContentHash
+          }
         }
-        const message = await createMessage(change, String(hmrHash))
+        const message = await createMessage(
+          change,
+          String(hmrHash),
+          contentChanged
+        )
         if (message) {
           sendHmr(key, message)
         }
