@@ -51,48 +51,39 @@ describe('cache-components-spurious-cache-invalidation', () => {
     }, 15_000)
   }
 
-  // FIXME(turbopack): Turbopack has a separate bug that this test would trip
-  // over: visiting a newly added page can re-key all `"use cache"` entries,
-  // because the new entry's change subscription counts its first emission as
-  // a change and advances the HMR generation (`hmrHash` is a counter, not a
-  // content hash). This is a race against the entry's first build: reliable
-  // under CPU load, occasional otherwise. It's unrelated to the trigger
-  // tested here and not fixed by this PR, so the test is webpack-only.
-  if (!isTurbopack) {
-    it('keeps use cache entries when an unrelated page is added and removed', async () => {
-      const browser = await next.browser('/')
-      const stableValue = await waitForStableCachedValue(next, browser)
+  it('keeps use cache entries when an unrelated page is added and removed', async () => {
+    const browser = await next.browser('/')
+    const stableValue = await waitForStableCachedValue(next, browser)
 
-      try {
-        await addPageAndWaitUntilServable('/unrelated')
+    try {
+      await addPageAndWaitUntilServable('/unrelated')
 
-        await browser.loadPage(next.url + '/')
-        expect(await readCachedValue(browser)).toBe(stableValue)
-        await browser.loadPage(next.url + '/')
-        expect(await readCachedValue(browser)).toBe(stableValue)
+      await browser.loadPage(next.url + '/')
+      expect(await readCachedValue(browser)).toBe(stableValue)
+      await browser.loadPage(next.url + '/')
+      expect(await readCachedValue(browser)).toBe(stableValue)
 
-        await next.deleteFile('app/unrelated/page.tsx')
-        await retry(async () => {
-          expect((await next.fetch('/unrelated')).status).toBe(404)
-        }, 15_000)
+      await next.deleteFile('app/unrelated/page.tsx')
+      await retry(async () => {
+        expect((await next.fetch('/unrelated')).status).toBe(404)
+      }, 15_000)
 
-        // Removal doesn't compile anything we could wait for, so push another
-        // page addition through as a barrier before asserting.
-        await addPageAndWaitUntilServable('/unrelated-barrier')
+      // Removal doesn't compile anything we could wait for, so push another
+      // page addition through as a barrier before asserting.
+      await addPageAndWaitUntilServable('/unrelated-barrier')
 
-        await browser.loadPage(next.url + '/')
-        expect(await readCachedValue(browser)).toBe(stableValue)
-        await browser.loadPage(next.url + '/')
-        expect(await readCachedValue(browser)).toBe(stableValue)
-      } finally {
-        for (const dir of ['app/unrelated', 'app/unrelated-barrier']) {
-          if (nodeFs.existsSync(nodePath.join(next.testDir, dir))) {
-            await next.deleteFile(`${dir}/page.tsx`)
-          }
+      await browser.loadPage(next.url + '/')
+      expect(await readCachedValue(browser)).toBe(stableValue)
+      await browser.loadPage(next.url + '/')
+      expect(await readCachedValue(browser)).toBe(stableValue)
+    } finally {
+      for (const dir of ['app/unrelated', 'app/unrelated-barrier']) {
+        if (nodeFs.existsSync(nodePath.join(next.testDir, dir))) {
+          await next.deleteFile(`${dir}/page.tsx`)
         }
       }
-    })
-  }
+    }
+  })
 
   // Turbopack-only: on webpack, adding a page recompiles the server bundle
   // (the compiled-in client router filter changes), which replaces the
