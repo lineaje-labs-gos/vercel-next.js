@@ -1613,10 +1613,10 @@ export async function createHotReloaderTurbopack(
       // The current server-components generation. Only the change subscription
       // (an actual recompile) advances `hmrHash`; reloads and config
       // invalidations don't, so the value stays stable across requests until a
-      // real edit. Returned unconditionally (`"0"` before the first edit) so
-      // `"use cache"` keys are present and consistent for every request,
-      // mirroring webpack's always-present `stats.hash`.
-      return String(hmrHash)
+      // real edit. Scoped to `sessionId` so that cached entries are never
+      // reused across dev server runs — the code may have changed while the
+      // server was down.
+      return `${sessionId}-${hmrHash}`
     },
 
     sendToLegacyClients(action) {
@@ -1754,7 +1754,8 @@ export async function createHotReloaderTurbopack(
       return errors
     },
     async invalidate({
-      // .env files or tsconfig/jsconfig change
+      // Set on .env file changes, which can affect rendered output and
+      // cached data.
       reloadAfterInvalidation,
     }) {
       if (reloadAfterInvalidation) {
