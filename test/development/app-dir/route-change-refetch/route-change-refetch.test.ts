@@ -19,9 +19,15 @@ describe('route-change-refetch - App Router', () => {
     }, 15_000)
   }
 
+  // Wait for the removal to land. A change that's still propagating when the
+  // test ends gets announced during the next test, which makes that test's tab
+  // refetch when it never asked for it.
   async function cleanupAddedPage() {
     if (nodeFs.existsSync(nodePath.join(next.testDir, 'app/zz-added'))) {
       await next.deleteFile('app/zz-added/page.tsx')
+      await retry(async () => {
+        expect((await next.fetch('/zz-added')).status).toBe(404)
+      }, 15_000)
     }
   }
 
@@ -59,6 +65,9 @@ describe('route-change-refetch - App Router', () => {
         nodeFs.existsSync(nodePath.join(next.testDir, 'app/existing/page.bak'))
       ) {
         await next.renameFile('app/existing/page.bak', 'app/existing/page.tsx')
+        await retry(async () => {
+          expect((await next.fetch('/existing')).status).toBe(200)
+        }, 15_000)
       }
     }
   })
@@ -88,6 +97,9 @@ describe('route-change-refetch - App Router', () => {
     } finally {
       if (nodeFs.existsSync(nodePath.join(next.testDir, 'app/docs'))) {
         await next.deleteFile('app/docs/[slug]/page.tsx')
+        await retry(async () => {
+          expect((await next.fetch('/docs/abc')).status).toBe(404)
+        }, 15_000)
       }
     }
   })
@@ -112,6 +124,9 @@ describe('route-change-refetch - App Router', () => {
     } finally {
       if (nodeFs.existsSync(nodePath.join(next.testDir, 'app/(group)'))) {
         await next.deleteFile('app/(group)/grouped/page.tsx')
+        await retry(async () => {
+          expect((await next.fetch('/grouped')).status).toBe(404)
+        }, 15_000)
       }
     }
   })
@@ -139,6 +154,11 @@ describe('route-change-refetch - App Router', () => {
     } finally {
       if (nodeFs.existsSync(nodePath.join(next.testDir, 'app/posts/123'))) {
         await next.deleteFile('app/posts/123/page.tsx')
+        await retry(async () => {
+          const html = await (await next.fetch('/posts/123')).text()
+          expect(html).toContain('id="dynamic"')
+          expect(html).not.toContain('id="static"')
+        }, 15_000)
       }
     }
   })
@@ -211,6 +231,9 @@ describe('route-change-refetch - Pages Router', () => {
   async function cleanupAddedPage() {
     if (nodeFs.existsSync(nodePath.join(next.testDir, 'pages/zz-added.tsx'))) {
       await next.deleteFile('pages/zz-added.tsx')
+      await retry(async () => {
+        expect((await next.fetch('/zz-added')).status).toBe(404)
+      }, 15_000)
     }
   }
 
@@ -225,9 +248,6 @@ describe('route-change-refetch - Pages Router', () => {
       }, 15_000)
     } finally {
       await cleanupAddedPage()
-      // Park the tab on a page that outlives this test, so the cleanup's own
-      // removal notification can't reload it while the next test starts.
-      await browser.loadPage(next.url + '/')
     }
   })
 
@@ -252,9 +272,6 @@ describe('route-change-refetch - Pages Router', () => {
           expect((await next.fetch('/existing')).status).toBe(200)
         }, 15_000)
       }
-      // Park the tab on a page that outlives this test, so the cleanup's own
-      // notifications can't reload it while the next test starts.
-      await browser.loadPage(next.url + '/')
     }
   })
 
@@ -280,9 +297,6 @@ describe('route-change-refetch - Pages Router', () => {
           expect((await next.fetch('/posts/123')).status).toBe(200)
         }, 15_000)
       }
-      // Park the tab on a page that outlives this test, so the cleanup's own
-      // notifications can't reload it while the next test starts.
-      await browser.loadPage(next.url + '/')
     }
   })
 
