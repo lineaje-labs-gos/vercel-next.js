@@ -2986,6 +2986,7 @@ async function renderAppPage(
   const rootParams = getRootParams(loaderTree, ctx.getDynamicParamFromSegment)
   const fallbackParams = getRequestMeta(req, 'fallbackParams') || null
   const hmrRefreshHash = getRequestMeta(req, 'hmrRefreshHash')
+  const variants = getRequestMeta(req, 'variants') ?? {}
 
   const createRequestStore = createRequestStoreForRender.bind(
     null,
@@ -2993,6 +2994,7 @@ async function renderAppPage(
     res,
     url,
     rootParams,
+    variants,
     implicitTags,
     renderOpts.onUpdateCookies,
     renderOpts.previewProps,
@@ -6665,6 +6667,7 @@ export async function runValidationInDevFromSnapshot(
       search: message.request.urlSearch,
     },
     rootParams: message.request.rootParams,
+    variants: message.request.variants,
     implicitTags,
     resumeDataCache: null,
     previewProps: undefined,
@@ -8253,6 +8256,13 @@ async function validateInstantConfigInBuildWithSample(
         userspaceMutableCookies: unusedMutableCookies,
         draftMode,
         rootParams: sampleRootParams,
+        // TODO(variants): validation samples do not carry variant values yet.
+        // Unlike root params, variants cannot be re-derived from the loader
+        // tree, so they would have to be threaded in from the outer request.
+        // Leaving them empty means a page that reads a variant during instant
+        // validation sees it as unresolved. Only reachable with Cache
+        // Components enabled.
+        variants: {},
         validationSamples,
         validationSampleTracking: createValidationSampleTracking(),
         // This will be set when rendering
