@@ -1681,6 +1681,7 @@ async function prospectiveRuntimeServerPrerender(
     type: 'prerender-runtime',
     phase: 'render',
     rootParams,
+    variants: renderOpts.variants ?? null,
     implicitTags,
     renderSignal: initialServerRenderController.signal,
     controller: initialServerPrerenderController,
@@ -1865,6 +1866,7 @@ async function finalRuntimeServerPrerender(
     type: 'prerender-runtime',
     phase: 'render',
     rootParams,
+    variants: renderOpts.variants ?? null,
     implicitTags,
     renderSignal: finalServerController.signal,
     controller: finalServerController,
@@ -2986,7 +2988,7 @@ async function renderAppPage(
   const rootParams = getRootParams(loaderTree, ctx.getDynamicParamFromSegment)
   const fallbackParams = getRequestMeta(req, 'fallbackParams') || null
   const hmrRefreshHash = getRequestMeta(req, 'hmrRefreshHash')
-  const variants = getRequestMeta(req, 'variants') ?? {}
+  const variants = getRequestMeta(req, 'variants') ?? null
 
   const createRequestStore = createRequestStoreForRender.bind(
     null,
@@ -8262,7 +8264,7 @@ async function validateInstantConfigInBuildWithSample(
         // Leaving them empty means a page that reads a variant during instant
         // validation sees it as unresolved. Only reachable with Cache
         // Components enabled.
-        variants: {},
+        variants: null,
         validationSamples,
         validationSampleTracking: createValidationSampleTracking(),
         // This will be set when rendering
@@ -8713,6 +8715,7 @@ async function prerenderToStream(
         type: 'prerender',
         phase: 'render',
         rootParams,
+        variants: renderOpts.variants ?? null,
         fallbackRouteParams,
         implicitTags,
         // While this render signal isn't going to be used to abort a React render while getting the RSC payload
@@ -8755,6 +8758,7 @@ async function prerenderToStream(
         type: 'prerender',
         phase: 'render',
         rootParams,
+        variants: renderOpts.variants ?? null,
         fallbackRouteParams,
         implicitTags,
         renderSignal: initialServerRenderController.signal,
@@ -9024,6 +9028,7 @@ async function prerenderToStream(
         type: 'prerender',
         phase: 'render',
         rootParams,
+        variants: renderOpts.variants ?? null,
         fallbackRouteParams,
         implicitTags,
         // While this render signal isn't going to be used to abort a React render while getting the RSC payload
@@ -9087,6 +9092,7 @@ async function prerenderToStream(
         type: 'prerender',
         phase: 'render',
         rootParams,
+        variants: renderOpts.variants ?? null,
         fallbackRouteParams,
         implicitTags,
         renderSignal: finalServerRenderController.signal,
@@ -9557,6 +9563,7 @@ async function prerenderToStream(
         type: 'prerender-ppr',
         phase: 'render',
         rootParams,
+        variants: renderOpts.variants ?? null,
         fallbackRouteParams,
         implicitTags,
         dynamicTracking,
@@ -9593,6 +9600,7 @@ async function prerenderToStream(
         type: 'prerender-ppr',
         phase: 'render',
         rootParams,
+        variants: renderOpts.variants ?? null,
         fallbackRouteParams,
         implicitTags,
         dynamicTracking,
@@ -9796,6 +9804,7 @@ async function prerenderToStream(
         type: 'prerender-legacy',
         phase: 'render',
         rootParams,
+        variants: renderOpts.variants ?? null,
         implicitTags,
         revalidate: INFINITE_CACHE,
         expire: INFINITE_CACHE,
@@ -10017,6 +10026,7 @@ async function prerenderToStream(
         type: 'prerender',
         phase: 'render',
         rootParams,
+        variants: renderOpts.variants ?? null,
         fallbackRouteParams,
         implicitTags,
         renderSignal: errorServerRenderController.signal,
@@ -10334,6 +10344,7 @@ async function prerenderToStream(
       type: 'prerender-legacy',
       phase: 'render',
       rootParams,
+      variants: renderOpts.variants ?? null,
       implicitTags: implicitTags,
       revalidate:
         typeof prerenderStore?.revalidate !== 'undefined'
