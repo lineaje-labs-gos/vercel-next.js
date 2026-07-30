@@ -964,10 +964,7 @@ export async function createHotReloaderTurbopack(
     }
   }
 
-  async function unsubscribeFromClientChanges(
-    key: EntryKey,
-    preserveIssues = false
-  ) {
+  async function unsubscribeFromClientChanges(key: EntryKey) {
     const subscriptionPromise = changeSubscriptions.get(key)
     if (subscriptionPromise) {
       // Remove this before awaiting so a request that reactivates the route can
@@ -976,9 +973,7 @@ export async function createHotReloaderTurbopack(
       const subscription = await subscriptionPromise
       await subscription.return?.()
     }
-    if (!preserveIssues) {
-      currentEntryIssues.delete(key)
-    }
+    currentEntryIssues.delete(key)
   }
 
   const maxInactiveAge = nextConfig.onDemandEntries?.maxInactiveAge ?? 60 * 1000
@@ -1084,9 +1079,7 @@ export async function createHotReloaderTurbopack(
       // idempotent reactivation, while clearing it could leave a retired graph
       // incorrectly recorded as active.
       await setRouteHmrChunksActive(keys, false)
-      await Promise.all(
-        keys.map((key) => unsubscribeFromClientChanges(key, true))
-      )
+      await Promise.all(keys.map(unsubscribeFromClientChanges))
     })()
     for (const key of keys) {
       routeChangeSubscriptionDisposals.set(key, disposal)
