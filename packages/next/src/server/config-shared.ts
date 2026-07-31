@@ -921,7 +921,7 @@ export interface ExperimentalConfig {
   /**
    * Enable scope hoisting of static CommonJS modules.
    *
-   * Defaults to `false`
+   * Defaults to `true`
    */
   turbopackCjsScopeHoisting?: boolean
 
