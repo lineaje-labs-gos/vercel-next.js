@@ -1681,7 +1681,8 @@ async function prospectiveRuntimeServerPrerender(
     type: 'prerender-runtime',
     phase: 'render',
     rootParams,
-    variants: renderOpts.variants ?? null,
+    staticVariants: renderOpts.staticVariants ?? null,
+    runtimeVariants: renderOpts.runtimeVariants ?? null,
     implicitTags,
     renderSignal: initialServerRenderController.signal,
     controller: initialServerPrerenderController,
@@ -1866,7 +1867,8 @@ async function finalRuntimeServerPrerender(
     type: 'prerender-runtime',
     phase: 'render',
     rootParams,
-    variants: renderOpts.variants ?? null,
+    staticVariants: renderOpts.staticVariants ?? null,
+    runtimeVariants: renderOpts.runtimeVariants ?? null,
     implicitTags,
     renderSignal: finalServerController.signal,
     controller: finalServerController,
@@ -2988,7 +2990,10 @@ async function renderAppPage(
   const rootParams = getRootParams(loaderTree, ctx.getDynamicParamFromSegment)
   const fallbackParams = getRequestMeta(req, 'fallbackParams') || null
   const hmrRefreshHash = getRequestMeta(req, 'hmrRefreshHash')
-  const variants = getRequestMeta(req, 'variants') ?? null
+  // Already split by tier where the cache key was computed, so that both
+  // agree on which combination this request matched.
+  const staticVariants = renderOpts.staticVariants ?? null
+  const runtimeVariants = renderOpts.runtimeVariants ?? null
 
   const createRequestStore = createRequestStoreForRender.bind(
     null,
@@ -2996,7 +3001,8 @@ async function renderAppPage(
     res,
     url,
     rootParams,
-    variants,
+    staticVariants,
+    runtimeVariants,
     implicitTags,
     renderOpts.onUpdateCookies,
     renderOpts.previewProps,
@@ -6669,7 +6675,8 @@ export async function runValidationInDevFromSnapshot(
       search: message.request.urlSearch,
     },
     rootParams: message.request.rootParams,
-    variants: message.request.variants,
+    staticVariants: message.request.staticVariants,
+    runtimeVariants: message.request.runtimeVariants,
     implicitTags,
     resumeDataCache: null,
     previewProps: undefined,
@@ -8264,7 +8271,8 @@ async function validateInstantConfigInBuildWithSample(
         // Leaving them empty means a page that reads a variant during instant
         // validation sees it as unresolved. Only reachable with Cache
         // Components enabled.
-        variants: null,
+        staticVariants: null,
+        runtimeVariants: null,
         validationSamples,
         validationSampleTracking: createValidationSampleTracking(),
         // This will be set when rendering
@@ -8715,7 +8723,7 @@ async function prerenderToStream(
         type: 'prerender',
         phase: 'render',
         rootParams,
-        variants: renderOpts.variants ?? null,
+        staticVariants: renderOpts.staticVariants ?? null,
         fallbackRouteParams,
         implicitTags,
         // While this render signal isn't going to be used to abort a React render while getting the RSC payload
@@ -8758,7 +8766,7 @@ async function prerenderToStream(
         type: 'prerender',
         phase: 'render',
         rootParams,
-        variants: renderOpts.variants ?? null,
+        staticVariants: renderOpts.staticVariants ?? null,
         fallbackRouteParams,
         implicitTags,
         renderSignal: initialServerRenderController.signal,
@@ -9028,7 +9036,7 @@ async function prerenderToStream(
         type: 'prerender',
         phase: 'render',
         rootParams,
-        variants: renderOpts.variants ?? null,
+        staticVariants: renderOpts.staticVariants ?? null,
         fallbackRouteParams,
         implicitTags,
         // While this render signal isn't going to be used to abort a React render while getting the RSC payload
@@ -9092,7 +9100,7 @@ async function prerenderToStream(
         type: 'prerender',
         phase: 'render',
         rootParams,
-        variants: renderOpts.variants ?? null,
+        staticVariants: renderOpts.staticVariants ?? null,
         fallbackRouteParams,
         implicitTags,
         renderSignal: finalServerRenderController.signal,
@@ -9563,7 +9571,7 @@ async function prerenderToStream(
         type: 'prerender-ppr',
         phase: 'render',
         rootParams,
-        variants: renderOpts.variants ?? null,
+        staticVariants: renderOpts.staticVariants ?? null,
         fallbackRouteParams,
         implicitTags,
         dynamicTracking,
@@ -9600,7 +9608,7 @@ async function prerenderToStream(
         type: 'prerender-ppr',
         phase: 'render',
         rootParams,
-        variants: renderOpts.variants ?? null,
+        staticVariants: renderOpts.staticVariants ?? null,
         fallbackRouteParams,
         implicitTags,
         dynamicTracking,
@@ -9804,7 +9812,7 @@ async function prerenderToStream(
         type: 'prerender-legacy',
         phase: 'render',
         rootParams,
-        variants: renderOpts.variants ?? null,
+        staticVariants: renderOpts.staticVariants ?? null,
         implicitTags,
         revalidate: INFINITE_CACHE,
         expire: INFINITE_CACHE,
@@ -10026,7 +10034,7 @@ async function prerenderToStream(
         type: 'prerender',
         phase: 'render',
         rootParams,
-        variants: renderOpts.variants ?? null,
+        staticVariants: renderOpts.staticVariants ?? null,
         fallbackRouteParams,
         implicitTags,
         renderSignal: errorServerRenderController.signal,
@@ -10344,7 +10352,7 @@ async function prerenderToStream(
       type: 'prerender-legacy',
       phase: 'render',
       rootParams,
-      variants: renderOpts.variants ?? null,
+      staticVariants: renderOpts.staticVariants ?? null,
       implicitTags: implicitTags,
       revalidate:
         typeof prerenderStore?.revalidate !== 'undefined'
