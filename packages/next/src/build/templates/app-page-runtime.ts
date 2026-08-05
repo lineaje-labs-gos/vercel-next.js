@@ -901,7 +901,6 @@ export function createAppPageEntrypoint({
             images: nextConfig.images,
             previewProps: prerenderManifest.preview,
             enableTainting: nextConfig.experimental.taint,
-            htmlLimitedBots: nextConfig.htmlLimitedBots,
             reactMaxHeadersLength: nextConfig.reactMaxHeadersLength,
 
             multiZoneDraftMode,
