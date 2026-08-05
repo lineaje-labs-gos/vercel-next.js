@@ -102,14 +102,13 @@ export async function turbopackAnalyze(
 
   try {
     const analyzeEventsSpan = trace('turbopack-analyze-events')
-    // Stop immediately: this span is only used as a parent for
-    // manualTraceChild calls which carry their own timestamps.
-    analyzeEventsSpan.stop()
     backgroundLogCompilationEvents(project, { parentSpan: analyzeEventsSpan })
 
     await project.writeAnalyzeData(analyzeContext.appDirOnly)
 
-    const shutdownPromise = project.shutdown()
+    const shutdownPromise = analyzeEventsSpan.traceAsyncFn((_span) =>
+      project.shutdown()
+    )
 
     const time = process.hrtime(startTime)
     return {
@@ -119,12 +118,5 @@ export async function turbopackAnalyze(
   } catch (err) {
     await project.shutdown()
     throw err
-  }
-}
-
-let shutdownPromise: Promise<void> | undefined
-export async function waitForShutdown(): Promise<void> {
-  if (shutdownPromise) {
-    await shutdownPromise
   }
 }

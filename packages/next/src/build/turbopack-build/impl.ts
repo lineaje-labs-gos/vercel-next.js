@@ -17,12 +17,7 @@ import loadConfig from '../../server/config'
 import { hasCustomExportOutput } from '../../export/utils'
 import { Telemetry } from '../../telemetry/storage'
 import { eventBuildFeatureUsageFromTurbopack } from '../../telemetry/events/build'
-import {
-  setGlobal,
-  trace,
-  initializeTraceState,
-  getTraceEvents,
-} from '../../trace'
+import { setGlobal, initializeTraceState, getTraceEvents } from '../../trace'
 import type { TraceState } from '../../trace'
 import { isCI } from '../../server/ci-info'
 import { backgroundLogCompilationEvents } from '../../shared/lib/turbopack/compilation-events'
@@ -157,13 +152,9 @@ export async function turbopackBuild(telemetry: Telemetry): Promise<{
         }
       : undefined
   )
-  const buildEventsSpan = trace('turbopack-build-events')
-  // Stop immediately: this span is only used as a parent for
-  // manualTraceChild calls which carry their own timestamps.
-  buildEventsSpan.stop()
   const shutdownController = new AbortController()
   const compilationEvents = backgroundLogCompilationEvents(project, {
-    parentSpan: buildEventsSpan,
+    parentSpan: NextBuildContext.nextBuildSpan,
     signal: shutdownController.signal,
   })
 
