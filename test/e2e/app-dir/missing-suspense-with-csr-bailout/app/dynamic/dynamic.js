@@ -1,3 +1,3 @@
-export default () => {
-  return <div id="dynamic">Hello, world!</div>
+export default function Dynamic({ id, children }) {
+  return <div id={id}>{children}</div>
 }

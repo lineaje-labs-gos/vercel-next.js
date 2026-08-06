@@ -1,4 +1,5 @@
 import { nextTestSetup } from 'e2e-utils'
+import { retry } from 'next-test-utils'
 
 describe('missing-suspense-with-csr-bailout', () => {
   const { next, isNextDev, skipped } = nextTestSetup({
@@ -55,30 +56,87 @@ describe('missing-suspense-with-csr-bailout', () => {
   })
 
   describe('next/dynamic', () => {
-    beforeEach(async () => {
-      await next.renameFile('app/page.js', 'app/_page.js')
-      await next.start()
-    })
-    afterEach(async () => {
-      await next.renameFile('app/_page.js', 'app/page.js')
-    })
+    const bailoutCases = [
+      {
+        container: '#without-loading',
+        content: '#browser-only',
+        serverFallback: '',
+        clientContent: 'Browser only',
+      },
+      {
+        container: '#with-loading',
+        content: '#browser-only-with-loading',
+        serverFallback: 'Loading...',
+        clientContent: 'Browser only with loading',
+      },
+    ]
 
-    it('does not emit errors related to bailing out of client side rendering', async () => {
-      const browser = await next.browser('/dynamic', {
-        pushErrorAsConsoleLog: true,
-      })
+    it.each([
+      {
+        name: 'uses the legacy bailout by default',
+        nextConfig: {},
+        expectedDigest: 'BAILOUT_TO_CLIENT_SIDE_RENDERING',
+      },
+      {
+        name: 'uses the React browser recoverable when enabled',
+        nextConfig: { experimental: { reactBrowserBailout: true } },
+        expectedDigest: '',
+      },
+    ])('$name', async ({ nextConfig, expectedDigest }) => {
+      await next.patchFile(
+        'next.config.js',
+        `module.exports = ${JSON.stringify(nextConfig)}`,
+        async () => {
+          await next.renameFile('app/page.js', 'app/_page.js')
 
-      try {
-        await browser.waitForElementByCss('#dynamic')
+          try {
+            await next.start()
 
-        expect(await browser.log()).not.toContainEqual(
-          expect.objectContaining({
-            source: 'error',
-          })
-        )
-      } finally {
-        await browser.close()
-      }
+            const cliOutputIndex = next.cliOutput.length
+
+            const $ = await next.render$('/dynamic')
+            for (const { container, content, serverFallback } of bailoutCases) {
+              expect($(container).find(content)).toHaveLength(0)
+              expect($(container).text()).toBe(serverFallback)
+              expect(
+                $(container).find(`template[data-dgst="${expectedDigest}"]`)
+              ).toHaveLength(1)
+            }
+
+            const browser = await next.browser('/dynamic', {
+              pushErrorAsConsoleLog: true,
+            })
+
+            try {
+              await retry(async () => {
+                for (const { content, clientContent } of bailoutCases) {
+                  expect(await browser.elementByCss(content).text()).toBe(
+                    clientContent
+                  )
+                }
+              })
+              expect(
+                await browser.hasElementByCssSelector('#loading-fallback')
+              ).toBe(false)
+              expect(
+                (await browser.log()).filter((log) => log.source === 'error')
+              ).toEqual([])
+            } finally {
+              await browser.close()
+            }
+
+            const cliOutput = next.cliOutput.slice(cliOutputIndex)
+            expect(
+              cliOutput.match(
+                /Recoverable Exception|Bail out to client-side rendering/
+              )
+            ).toBeNull()
+          } finally {
+            await next.stop()
+            await next.renameFile('app/_page.js', 'app/page.js')
+          }
+        }
+      )
     })
   })
 })
