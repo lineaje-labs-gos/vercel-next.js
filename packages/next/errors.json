@@ -1522,5 +1522,11 @@
   "1521": "WebSocket lifecycle onClose() must return a cleanup function.",
   "1522": "Failed to close WebSocket connections",
   "1523": "WebSocket shutdown tasks failed",
-  "1524": "Failed to close WebSocket scope"
+  "1524": "Failed to close WebSocket scope",
+  "1525": "Failed to register the custom-server WebSocket upgrade listener",
+  "1526": "Failed to prepare the Next.js custom server",
+  "1527": "Failed to close pending WebSocket upgrades",
+  "1528": "Failed to close the Next.js custom server",
+  "1529": "Failed to transfer the custom-server WebSocket upgrade listener",
+  "1530": "Failed to remove the custom-server WebSocket upgrade listener"
 }
