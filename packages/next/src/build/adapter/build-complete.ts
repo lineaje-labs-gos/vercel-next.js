@@ -2219,6 +2219,84 @@ async function getSharedNodeAssets({
     }
   }
 
+  const { nodeFileTrace } =
+    require('next/dist/compiled/@vercel/nft') as typeof import('next/dist/compiled/@vercel/nft')
+  const { makeIgnoreFn } =
+    require('../collect-build-traces') as typeof import('../collect-build-traces')
+
+  const sharedTraceIgnores = [
+    '**/next/dist/compiled/next-server/**/*.dev.js',
+    '**/next/dist/compiled/webpack/*',
+    '**/node_modules/webpack5/**/*',
+    '**/next/dist/server/lib/route-resolver*',
+    'next/dist/compiled/semver/semver/**/*.js',
+    '**/node_modules/react{,-dom,-dom-server-turbopack}/**/*.development.js',
+    '**/*.d.ts',
+    '**/*.map',
+    '**/next/dist/pages/**/*',
+    '**/node_modules/sharp/**/*',
+    '**/@img/sharp-libvips*/**/*',
+    '**/next/dist/compiled/edge-runtime/**/*',
+    '**/next/dist/server/web/sandbox/**/*',
+    '**/next/dist/server/post-process.js',
+  ]
+  const sharedIgnoreFn = makeIgnoreFn(outputFileTracingRoot, sharedTraceIgnores)
+
+  async function traceNodeAssets(
+    entries: string[],
+    assets: Record<string, string>,
+    assetsHashes: Record<string, string>
+  ) {
+    const { fileList, esmFileList } = await nodeFileTrace(entries, {
+      base: outputFileTracingRoot,
+      ignore: sharedIgnoreFn,
+      moduleSyncCatchall: true,
+    })
+    esmFileList.forEach((item) => fileList.add(item))
+
+    for (const tracingRootRelativeFilePath of fileList) {
+      // nodeFileTrace returns paths relative to `base` (outputFileTracingRoot),
+      // so resolve to an absolute path and re-relativize against repoRoot, which
+      // is the root all adapter output keys/source paths are based on.
+      const absoluteFilePath = path.join(
+        outputFileTracingRoot,
+        tracingRootRelativeFilePath
+      )
+      await pushAsset(
+        assets,
+        assetsHashes,
+        path.relative(repoRoot, absoluteFilePath),
+        absoluteFilePath,
+        bundler,
+        salt
+      )
+    }
+  }
+
+  // The require hook redirects shared-runtime imports from external packages
+  // to the Pages vendored contexts. Those contexts load module.compiled, whose
+  // runtime dependency is selected dynamically. Pages API entries do not trace
+  // that runtime themselves, so trace it with the shared Pages modules.
+  const pagesRuntimePath = require.resolve(
+    `next/dist/compiled/next-server/pages${
+      bundler === Bundler.Turbopack ? '-turbo' : ''
+    }.runtime.prod.js`
+  )
+  const pagesRuntimeRelativePath = path.relative(repoRoot, pagesRuntimePath)
+  await pushAsset(
+    pagesSharedNodeAssets,
+    pagesSharedNodeAssetsHashes,
+    pagesRuntimeRelativePath,
+    pagesRuntimePath,
+    bundler,
+    salt
+  )
+  await traceNodeAssets(
+    [pagesRuntimePath],
+    pagesSharedNodeAssets,
+    pagesSharedNodeAssetsHashes
+  )
+
   // add "next/setup-node-env" stub so it can be required top-level
   // TODO: should we make this always available without adapters
   const setupNodeStubPath = path.join(
@@ -2236,32 +2314,6 @@ async function getSharedNodeAssets({
 
   // Turbopack handles this automatically and these files are listed in the nft.json files.
   if (bundler !== Bundler.Turbopack) {
-    const { nodeFileTrace } =
-      require('next/dist/compiled/@vercel/nft') as typeof import('next/dist/compiled/@vercel/nft')
-    const { makeIgnoreFn } =
-      require('../collect-build-traces') as typeof import('../collect-build-traces')
-
-    const sharedTraceIgnores = [
-      '**/next/dist/compiled/next-server/**/*.dev.js',
-      '**/next/dist/compiled/webpack/*',
-      '**/node_modules/webpack5/**/*',
-      '**/next/dist/server/lib/route-resolver*',
-      'next/dist/compiled/semver/semver/**/*.js',
-      '**/node_modules/react{,-dom,-dom-server-turbopack}/**/*.development.js',
-      '**/*.d.ts',
-      '**/*.map',
-      '**/next/dist/pages/**/*',
-      '**/node_modules/sharp/**/*',
-      '**/@img/sharp-libvips*/**/*',
-      '**/next/dist/compiled/edge-runtime/**/*',
-      '**/next/dist/server/web/sandbox/**/*',
-      '**/next/dist/server/post-process.js',
-    ]
-    const sharedIgnoreFn = makeIgnoreFn(
-      outputFileTracingRoot,
-      sharedTraceIgnores
-    )
-
     // These are modules that are necessary for bootstrapping node env
     const necessaryNodeDependencies = [
       require.resolve('next/dist/server/node-environment'),
@@ -2297,33 +2349,11 @@ async function getSharedNodeAssets({
       }
     }
 
-    const { fileList, esmFileList } = await nodeFileTrace(
+    await traceNodeAssets(
       necessaryNodeDependencies,
-      {
-        base: outputFileTracingRoot,
-        ignore: sharedIgnoreFn,
-        moduleSyncCatchall: true,
-      }
+      sharedNodeAssets,
+      sharedNodeAssetsHashes
     )
-    esmFileList.forEach((item) => fileList.add(item))
-
-    for (const tracingRootRelativeFilePath of fileList) {
-      // nodeFileTrace returns paths relative to `base` (outputFileTracingRoot),
-      // so resolve to an absolute path and re-relativize against repoRoot, which
-      // is the root all adapter output keys/source paths are based on.
-      const absoluteFilePath = path.join(
-        outputFileTracingRoot,
-        tracingRootRelativeFilePath
-      )
-      await pushAsset(
-        sharedNodeAssets,
-        sharedNodeAssetsHashes,
-        path.relative(repoRoot, absoluteFilePath),
-        absoluteFilePath,
-        bundler,
-        salt
-      )
-    }
   }
 
   if (hasInstrumentationHook) {
