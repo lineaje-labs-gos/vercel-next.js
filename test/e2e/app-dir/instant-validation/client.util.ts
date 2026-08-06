@@ -1,6 +1,7 @@
 import {
   expectNoBuildValidationErrors,
   extractBuildValidationError,
+  getDevCliValidationOutput,
   waitForValidation,
 } from 'e2e-utils/instant-validation'
 import {
@@ -464,6 +465,59 @@ export function registerClientTests(ctx: InstantValidationCaseContext) {
              - Rerun the production build with \`next build --debug-prerender\` to generate better stack traces.
            Stopping prerender due to instant validation errors."
           `)
+        expect(result.exitCode).toBe(1)
+      }
+    })
+
+    it('unable to validate - React browser bailout blocks children', async () => {
+      const pathname =
+        '/suspense-in-root/static/invalid-react-browser-bailout-blocks-children'
+
+      if (isNextDev) {
+        const browser = await navigateTo(pathname)
+        expect(
+          await getDevCliValidationOutput(
+            await browser.url(),
+            getCliOutputSinceMark
+          )
+        ).toMatchInlineSnapshot(`
+         "Error: Route "/suspense-in-root/static/invalid-react-browser-bailout-blocks-children": Could not validate that a segment in your UI has instant navigation.
+
+         This segment was dropped from rendering. Issues that would prevent instant navigation will go undetected.
+
+         Dropped segment:
+           app/suspense-in-root/static/invalid-react-browser-bailout-blocks-children/page.tsx
+
+         Ways to fix this:
+           - [render] Render the dropped segment
+           - [ignore] Set \`export const instant = false\` to opt the dropped segment out of instant-navigation validation
+
+         Learn more: https://nextjs.org/docs/messages/instant-unrendered-segment
+             at ignore-listed frames"
+        `)
+      } else {
+        const result = await prerender(pathname)
+        expect(extractBuildValidationError(result.cliOutput))
+          .toMatchInlineSnapshot(`
+         "Error: Route "/suspense-in-root/static/invalid-react-browser-bailout-blocks-children": Could not validate that a segment in your UI has instant navigation.
+
+         This segment was dropped from rendering. Issues that would prevent instant navigation will go undetected.
+
+         Dropped segment:
+           app/suspense-in-root/static/invalid-react-browser-bailout-blocks-children/page.tsx
+
+         Ways to fix this:
+           - [render] Render the dropped segment
+           - [ignore] Set \`export const instant = false\` to opt the dropped segment out of instant-navigation validation
+
+         Learn more: https://nextjs.org/docs/messages/instant-unrendered-segment
+             at ignore-listed frames
+         Build-time instant validation failed for route "/suspense-in-root/static/invalid-react-browser-bailout-blocks-children".
+         To get a more detailed stack trace and pinpoint the issue, try one of the following:
+           - Start the app in development mode by running \`next dev\`, then open "/suspense-in-root/static/invalid-react-browser-bailout-blocks-children" in your browser to investigate the error.
+           - Rerun the production build with \`next build --debug-prerender\` to generate better stack traces.
+         Stopping prerender due to instant validation errors."
+        `)
         expect(result.exitCode).toBe(1)
       }
     })

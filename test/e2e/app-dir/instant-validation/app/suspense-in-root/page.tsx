@@ -137,6 +137,9 @@ export default async function Page() {
           <DebugLinks href="/suspense-in-root/static/invalid-csr-bailout-blocks-children" />
         </li>
         <li>
+          <DebugLinks href="/suspense-in-root/static/invalid-react-browser-bailout-blocks-children" />
+        </li>
+        <li>
           <DebugLinks href="/suspense-in-root/static/invalid-error-in-node-modules-blocks-children" />
         </li>
         <li>
