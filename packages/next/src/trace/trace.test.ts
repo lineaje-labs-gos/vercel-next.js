@@ -1,6 +1,9 @@
 import { mkdtemp, readFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
+import { PHASE_PRODUCTION_BUILD } from '../shared/lib/constants'
+import { createJsonReporter } from './report/to-json'
+import type { TraceEvent } from './types'
 import { setGlobal } from './shared'
 import {
   clearTraceEvents,
@@ -11,6 +14,30 @@ import {
   recordTraceEvents,
   trace,
 } from './trace'
+
+function traceEvent(name: string): TraceEvent {
+  return {
+    name,
+    duration: 1,
+    timestamp: 1,
+    id: 1,
+    startTime: 1,
+    tags: {},
+  }
+}
+
+// Fail fast with a useful message instead of stalling until the jest timeout.
+async function withTimeout<T>(promise: Promise<T>, message: string) {
+  let timer: NodeJS.Timeout
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), 5000)
+  })
+  try {
+    return await Promise.race([promise, timeout])
+  } finally {
+    clearTimeout(timer!)
+  }
+}
 
 describe('Trace', () => {
   beforeEach(() => {
@@ -80,6 +107,37 @@ describe('Trace', () => {
           },
         },
       ])
+    })
+
+    // A build flushes repeatedly: after each Turbopack compilation event, and
+    // again in the `finally` of `next build`. In production the flush also
+    // ends the write stream, so a second flush used to write to a finished
+    // stream, wait for a 'drain' that can never arrive, and hang the build
+    // with every span after the first flush missing from the file.
+    it('supports flushing more than once in a production build', async () => {
+      const tmpDir = await mkdtemp(join(tmpdir(), 'json-reporter'))
+      setGlobal('distDir', tmpDir)
+      setGlobal('phase', PHASE_PRODUCTION_BUILD)
+      const reporter = createJsonReporter({
+        filename: 'trace',
+        sizeLimit: Infinity,
+      })
+
+      reporter.report(traceEvent('before-flush'))
+      await reporter.flushAll()
+
+      reporter.report(traceEvent('after-flush'))
+      await withTimeout(
+        Promise.resolve(reporter.flushAll()),
+        'second flushAll() never resolved'
+      )
+
+      const names = (await readFile(join(tmpDir, 'trace'), 'utf-8'))
+        .split('\n')
+        .filter(Boolean)
+        .flatMap((line) => JSON.parse(line))
+        .map((event) => event.name)
+      expect(names).toEqual(['before-flush', 'after-flush'])
     })
   })
 

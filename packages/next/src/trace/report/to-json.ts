@@ -43,6 +43,12 @@ class RotatingWriteStream {
   sizeLimit: number
   private rotatePromise: Promise<void> | undefined
   private drainPromise: Promise<void> | undefined
+  // Set by `end()`. A finished stream can never drain again, so writes must
+  // reopen it rather than wait on it.
+  private ended: boolean = false
+  // Only the first stream for a file may truncate; reopening after `end()`
+  // must append or it would discard everything written so far.
+  private created: boolean = false
   constructor(file: string, sizeLimit: number) {
     this.file = file
     this.size = 0
@@ -55,8 +61,10 @@ class RotatingWriteStream {
       ...writeStreamOptions,
       // In dev, append so traces accumulate across sessions. In production,
       // truncate so each build starts with a fresh trace file.
-      flags: phase === PHASE_DEVELOPMENT_SERVER ? 'a' : 'w',
+      flags: phase === PHASE_DEVELOPMENT_SERVER || this.created ? 'a' : 'w',
     })
+    this.created = true
+    this.ended = false
   }
   // Recreate the file
   private async rotate() {
@@ -75,6 +83,14 @@ class RotatingWriteStream {
   }
   async write(data: string): Promise<void> {
     if (this.rotatePromise) await this.rotatePromise
+
+    // A flush ends the stream, but more spans can still be recorded afterwards
+    // (a build flushes after every compilation event, then again at the end).
+    // Writing to a finished stream returns `false` forever and never emits
+    // 'drain', so reopen instead of waiting on it.
+    if (this.ended) {
+      this.createWriteStream()
+    }
 
     this.size += data.length
     if (this.size > this.sizeLimit) {
@@ -95,6 +111,10 @@ class RotatingWriteStream {
   }
 
   end(): Promise<void> {
+    if (this.ended) {
+      return Promise.resolve()
+    }
+    this.ended = true
     return new Promise((resolve) => {
       this.writeStream.end(resolve)
     })
