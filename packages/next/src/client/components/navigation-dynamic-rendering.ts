@@ -6,6 +6,7 @@
 // the server module is not bundled into the client. Callers use optional calls
 // (`useDynamicRouteParams?.(...)`), so the browser stub is a no-op.
 import React from 'react'
+import { browser } from 'react-dom'
 
 import { BailoutToCSRError } from '../../shared/lib/lazy-dynamic/bailout-to-csr'
 import { InvariantError } from '../../shared/lib/invariant-error'
@@ -53,7 +54,12 @@ export function useDynamicSearchParams(expression: string) {
       if (workStore.forceStatic) {
         return
       }
-      throw new BailoutToCSRError(expression)
+      if (process.env.__NEXT_EXPERIMENTAL_REACT_BROWSER_BAILOUT) {
+        React.use(browser())
+        return
+      } else {
+        throw new BailoutToCSRError(expression)
+      }
     }
     case 'prerender':
     case 'prerender-runtime':

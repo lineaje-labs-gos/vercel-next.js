@@ -25,34 +25,70 @@ describe('missing-suspense-with-csr-bailout', () => {
   const isCacheComponentsEnabled =
     process.env.__NEXT_CACHE_COMPONENTS === 'true'
 
+  const bailoutImplementations = [
+    {
+      name: 'uses the legacy bailout by default',
+      nextConfig: {},
+      expectedDigest: 'BAILOUT_TO_CLIENT_SIDE_RENDERING',
+    },
+    {
+      name: 'uses the React browser recoverable when enabled',
+      nextConfig: { experimental: { reactBrowserBailout: true } },
+      expectedDigest: '',
+    },
+  ]
+
   describe('useSearchParams', () => {
     const message = isCacheComponentsEnabled
       ? 'https://nextjs.org/docs/messages/blocking-prerender-client-hook'
       : `useSearchParams() should be wrapped in a suspense boundary at page "/".`
 
-    it('should fail build if useSearchParams is not wrapped in a suspense boundary', async () => {
-      const { exitCode } = await next.build()
-      expect(exitCode).toBe(1)
-      expect(next.cliOutput).toContain(message)
-      // Can show the trace where the searchParams hook is used
-      // TODO: This path is different for Turbopack. Builds need to have sourcemaps support.
-      if (!process.env.IS_TURBOPACK_TEST) {
-        expect(next.cliOutput).toMatch(/at.*server[\\/]app[\\/]page.js/)
+    it.each(bailoutImplementations)(
+      '$name fails build if useSearchParams is not wrapped in a suspense boundary',
+      async ({ nextConfig }) => {
+        await next.patchFile(
+          'next.config.js',
+          `module.exports = ${JSON.stringify(nextConfig)}`,
+          async () => {
+            const { exitCode } = await next.build()
+            expect(exitCode).toBe(1)
+            expect(next.cliOutput).toContain(message)
+            if (nextConfig.experimental?.reactBrowserBailout) {
+              expect(next.cliOutput).not.toContain(
+                'BAILOUT_TO_CLIENT_SIDE_RENDERING'
+              )
+            }
+            // Can show the trace where the searchParams hook is used
+            // TODO: This path is different for Turbopack. Builds need to have sourcemaps support.
+            if (!process.env.IS_TURBOPACK_TEST) {
+              expect(next.cliOutput).toMatch(/at.*server[\\/]app[\\/]page.js/)
+            }
+          }
+        )
       }
-    })
+    )
 
-    it('should pass build if useSearchParams is wrapped in a suspense boundary', async () => {
-      await next.renameFile('app/layout.js', 'app/layout-no-suspense.js')
-      await next.renameFile('app/layout-suspense.js', 'app/layout.js')
+    it.each(bailoutImplementations)(
+      '$name passes build if useSearchParams is wrapped in a suspense boundary',
+      async ({ nextConfig }) => {
+        await next.patchFile(
+          'next.config.js',
+          `module.exports = ${JSON.stringify(nextConfig)}`,
+          async () => {
+            await next.renameFile('app/layout.js', 'app/layout-no-suspense.js')
+            await next.renameFile('app/layout-suspense.js', 'app/layout.js')
 
-      await expect(next.build()).resolves.toEqual({
-        exitCode: 0,
-        cliOutput: expect.not.stringContaining(message),
-      })
+            await expect(next.build()).resolves.toEqual({
+              exitCode: 0,
+              cliOutput: expect.not.stringContaining(message),
+            })
 
-      await next.renameFile('app/layout.js', 'app/layout-suspense.js')
-      await next.renameFile('app/layout-no-suspense.js', 'app/layout.js')
-    })
+            await next.renameFile('app/layout.js', 'app/layout-suspense.js')
+            await next.renameFile('app/layout-no-suspense.js', 'app/layout.js')
+          }
+        )
+      }
+    )
   })
 
   describe('next/dynamic', () => {
@@ -71,72 +107,68 @@ describe('missing-suspense-with-csr-bailout', () => {
       },
     ]
 
-    it.each([
-      {
-        name: 'uses the legacy bailout by default',
-        nextConfig: {},
-        expectedDigest: 'BAILOUT_TO_CLIENT_SIDE_RENDERING',
-      },
-      {
-        name: 'uses the React browser recoverable when enabled',
-        nextConfig: { experimental: { reactBrowserBailout: true } },
-        expectedDigest: '',
-      },
-    ])('$name', async ({ nextConfig, expectedDigest }) => {
-      await next.patchFile(
-        'next.config.js',
-        `module.exports = ${JSON.stringify(nextConfig)}`,
-        async () => {
-          await next.renameFile('app/page.js', 'app/_page.js')
-
-          try {
-            await next.start()
-
-            const cliOutputIndex = next.cliOutput.length
-
-            const $ = await next.render$('/dynamic')
-            for (const { container, content, serverFallback } of bailoutCases) {
-              expect($(container).find(content)).toHaveLength(0)
-              expect($(container).text()).toBe(serverFallback)
-              expect(
-                $(container).find(`template[data-dgst="${expectedDigest}"]`)
-              ).toHaveLength(1)
-            }
-
-            const browser = await next.browser('/dynamic', {
-              pushErrorAsConsoleLog: true,
-            })
+    it.each(bailoutImplementations)(
+      '$name',
+      async ({ nextConfig, expectedDigest }) => {
+        await next.patchFile(
+          'next.config.js',
+          `module.exports = ${JSON.stringify(nextConfig)}`,
+          async () => {
+            await next.renameFile('app/page.js', 'app/_page.js')
 
             try {
-              await retry(async () => {
-                for (const { content, clientContent } of bailoutCases) {
-                  expect(await browser.elementByCss(content).text()).toBe(
-                    clientContent
-                  )
-                }
-              })
-              expect(
-                await browser.hasElementByCssSelector('#loading-fallback')
-              ).toBe(false)
-              expect(
-                (await browser.log()).filter((log) => log.source === 'error')
-              ).toEqual([])
-            } finally {
-              await browser.close()
-            }
+              await next.start()
 
-            const cliOutput = next.cliOutput.slice(cliOutputIndex)
-            expect(
-              cliOutput.match(
-                /Recoverable Exception|Bail out to client-side rendering/
-              )
-            ).toBeNull()
-          } finally {
-            await next.stop()
-            await next.renameFile('app/_page.js', 'app/page.js')
+              const cliOutputIndex = next.cliOutput.length
+
+              const $ = await next.render$('/dynamic')
+              for (const {
+                container,
+                content,
+                serverFallback,
+              } of bailoutCases) {
+                expect($(container).find(content)).toHaveLength(0)
+                expect($(container).text()).toBe(serverFallback)
+                expect(
+                  $(container).find(`template[data-dgst="${expectedDigest}"]`)
+                ).toHaveLength(1)
+              }
+
+              const browser = await next.browser('/dynamic', {
+                pushErrorAsConsoleLog: true,
+              })
+
+              try {
+                await retry(async () => {
+                  for (const { content, clientContent } of bailoutCases) {
+                    expect(await browser.elementByCss(content).text()).toBe(
+                      clientContent
+                    )
+                  }
+                })
+                expect(
+                  await browser.hasElementByCssSelector('#loading-fallback')
+                ).toBe(false)
+                expect(
+                  (await browser.log()).filter((log) => log.source === 'error')
+                ).toEqual([])
+              } finally {
+                await browser.close()
+              }
+
+              const cliOutput = next.cliOutput.slice(cliOutputIndex)
+              expect(
+                cliOutput.match(
+                  /Recoverable Exception|Bail out to client-side rendering/
+                )
+              ).toBeNull()
+            } finally {
+              await next.stop()
+              await next.renameFile('app/_page.js', 'app/page.js')
+            }
           }
-        }
-      )
-    })
+        )
+      }
+    )
   })
 })
