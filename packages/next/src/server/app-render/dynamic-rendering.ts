@@ -52,7 +52,6 @@ import {
   ROOT_LAYOUT_BOUNDARY_NAME,
 } from '../../lib/framework/boundary-constants'
 import { scheduleOnNextTick } from '../../lib/scheduler'
-import { BailoutToCSRError } from '../../shared/lib/lazy-dynamic/bailout-to-csr'
 import {
   createRuntimeBodyError,
   createDynamicBodyError,
@@ -550,16 +549,6 @@ function assertPostpone() {
       `Invariant: React.unstable_postpone is not defined. This suggests the wrong version of React was loaded. This is a bug in Next.js`
     )
   }
-}
-
-/**
- * This is a bit of a hack to allow us to abort a render using a Postpone instance instead of an Error which changes React's
- * abort semantics slightly.
- */
-export function createRenderInBrowserAbortSignal(): AbortSignal {
-  const controller = new AbortController()
-  controller.abort(new BailoutToCSRError('Render in Browser'))
-  return controller.signal
 }
 
 /**

@@ -122,6 +122,11 @@ describe('missing-suspense-with-csr-bailout', () => {
               const cliOutputIndex = next.cliOutput.length
 
               const $ = await next.render$('/dynamic')
+              if (nextConfig.experimental?.reactBrowserBailout) {
+                expect($.html()).not.toContain(
+                  'BAILOUT_TO_CLIENT_SIDE_RENDERING'
+                )
+              }
               for (const {
                 container,
                 content,

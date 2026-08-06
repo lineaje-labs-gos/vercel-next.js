@@ -53,6 +53,7 @@ import {
   streamToString,
   createWebInlinedDataStream,
   createPendingStream,
+  createRenderInBrowserAbortSignal,
   createOnHeadersCallback,
   resumeAndAbort,
   renderToWebFlightStream,
@@ -178,7 +179,6 @@ import { getStackWithoutErrorMessage } from '../../lib/format-server-error'
 import { extractNextErrorCode } from '../../lib/error-telemetry-utils'
 import {
   accessedDynamicData,
-  createRenderInBrowserAbortSignal,
   formatDynamicAPIAccesses,
   isPrerenderInterruptedError,
   createDynamicTrackingState,
@@ -9492,7 +9492,9 @@ async function prerenderToStream(
           />,
           JSON.parse(JSON.stringify(postponed)),
           {
-            signal: createRenderInBrowserAbortSignal(),
+            signal: createRenderInBrowserAbortSignal(
+              ctx.renderOpts.experimental.reactBrowserBailout
+            ),
             onError: htmlRendererErrorHandler,
             nonce,
           }
@@ -9751,7 +9753,9 @@ async function prerenderToStream(
             />,
             JSON.parse(JSON.stringify(postponed)),
             {
-              signal: createRenderInBrowserAbortSignal(),
+              signal: createRenderInBrowserAbortSignal(
+                ctx.renderOpts.experimental.reactBrowserBailout
+              ),
               onError: htmlRendererErrorHandler,
               nonce,
             }
@@ -10259,7 +10263,9 @@ async function prerenderToStream(
             />,
             JSON.parse(JSON.stringify(errorPostponed)),
             {
-              signal: createRenderInBrowserAbortSignal(),
+              signal: createRenderInBrowserAbortSignal(
+                ctx.renderOpts.experimental.reactBrowserBailout
+              ),
               onError: htmlRendererErrorHandler,
               nonce,
             }

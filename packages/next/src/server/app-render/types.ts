@@ -167,6 +167,7 @@ export interface RenderOptsPartial {
     inlineCss: boolean
     prefetchInlining: PrefetchInliningConfig
     authInterrupts: boolean
+    reactBrowserBailout: boolean
     serverComponentsHmrCancellation?: boolean
     useCacheTimeout: number
     cachedNavigations: boolean
