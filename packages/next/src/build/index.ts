@@ -1782,11 +1782,7 @@ export default async function build(
             shutdownPromise: p,
             warnings,
             ...rest
-          } = await turbopackBuild(
-            process.env.NEXT_TURBOPACK_USE_WORKER === undefined ||
-              process.env.NEXT_TURBOPACK_USE_WORKER !== '0',
-            telemetry
-          )
+          } = await turbopackBuild(telemetry)
           shutdownPromise = p
           deferredTurbopackWarnings = warnings
           traceMemoryUsage('Finished build', nextBuildSpan)
