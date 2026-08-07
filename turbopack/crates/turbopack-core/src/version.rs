@@ -237,7 +237,7 @@ impl FileHashVersion {
                     .context("file not found")?;
                 Ok(Self::cell(FileHashVersion { hash }))
             }
-            AssetContent::Redirect { .. } => bail!("not a file"),
+            AssetContent::Redirect(..) => bail!("not a file"),
         }
     }
 }
