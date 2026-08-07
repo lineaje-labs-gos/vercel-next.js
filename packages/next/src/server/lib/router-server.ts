@@ -280,6 +280,7 @@ export async function initialize(opts: {
         restartServer: opts.restartServer,
         resetFetch,
         serverFastRefresh: effectiveServerFastRefresh,
+        webSocketRegistryScope,
       })
     )
 
