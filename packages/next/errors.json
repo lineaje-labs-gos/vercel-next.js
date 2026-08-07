@@ -1512,5 +1512,15 @@
   "1511": "NextResponse.upgrade() options must be an object.",
   "1512": "NextResponse.upgrade() does not support the \"%s\" option.",
   "1513": "NextResponse.upgrade() received an invalid allowed origin: \"%s\".",
-  "1514": "NextResponse.upgrade() allowedOrigins entries must be strings."
+  "1514": "NextResponse.upgrade() allowedOrigins entries must be strings.",
+  "1515": "Failed to install an App Route WebSocket request close listener",
+  "1516": "`experimental.webSocketRouteHandlers.allowedOrigins` must be an array of exact HTTP(S) origins, for example `https://app.example.com`.",
+  "1517": "NextResponse.upgrade() cannot be used with output: \"export\". Disable `experimental.webSocketRouteHandlers` or use a server deployment.",
+  "1518": "This App Route returned NextResponse.upgrade(), but experimental.webSocketRouteHandlers is not enabled in next.config.js.",
+  "1519": "`experimental.webSocketRouteHandlers` cannot be used with `adapterPath` until the adapter declares Node.js upgrade support.",
+  "1520": "`experimental.webSocketRouteHandlers` must be a boolean or an object containing only `allowedOrigins?: string[]`.",
+  "1521": "WebSocket lifecycle onClose() must return a cleanup function.",
+  "1522": "Failed to close WebSocket connections",
+  "1523": "WebSocket shutdown tasks failed",
+  "1524": "Failed to close WebSocket scope"
 }
