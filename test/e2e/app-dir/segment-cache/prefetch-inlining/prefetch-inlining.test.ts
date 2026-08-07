@@ -10,16 +10,22 @@ const HeadInlinedIntoSelf = 0b10000000 // 128
 const HeadOutlined = 0b100000000 // 256
 const PrefetchDisabled = 0b10000000000 // 1024
 
-// Matches the shape of RootTreePrefetch / TreePrefetch from collect-segment-
-// data.tsx. We only declare the fields we need.
+// A friendlier shape for the assertions below, converted from the transport
+// nodes of the /_tree response (NavigationFlightResponse in
+// shared/lib/app-router-types.ts / PartialTransportNode in
+// shared/lib/rsc-transport.ts).
 type TreePrefetch = {
   name: string
   prefetchHints: number
   slots: null | { [key: string]: TreePrefetch }
 }
 
-type RootTreePrefetch = {
-  tree: TreePrefetch
+// The wire shape of a /_tree response node. We only declare the fields
+// we need.
+type TransportNode = {
+  s: string | { n: string }
+  h?: number
+  c?: Map<string, TransportNode>
 }
 
 /**
@@ -116,13 +122,13 @@ function collectNodes(
 }
 
 // Temporary helper: fetches the route tree prefetch response and parses the
-// RootTreePrefetch object out of it. This will be replaced by end-to-end
-// tests that assert on actual client prefetch request behavior once the
-// client-side changes are done.
+// tree out of it. This will be replaced by end-to-end tests that assert on
+// actual client prefetch request behavior once the client-side changes
+// are done.
 async function fetchRouteTreePrefetch(
   next: any,
   pathname: string
-): Promise<RootTreePrefetch> {
+): Promise<{ tree: TreePrefetch }> {
   const res = await next.fetch(pathname, {
     headers: {
       RSC: '1',
@@ -131,10 +137,67 @@ async function fetchRouteTreePrefetch(
     },
   })
   const text = await res.text()
-  // The Flight response for a plain JSON object (no React nodes) is a single
-  // line: `0:{"tree":...,"staleTime":...}`. Strip the row ID prefix and parse.
-  const jsonStr = text.slice(text.indexOf(':') + 1)
-  return JSON.parse(jsonStr)
+  // The /_tree response is a Flight payload with no React nodes: a set of
+  // `id:json` rows (ids in hex), where the tree's child slots — Maps on the
+  // wire — are encoded as references (`"$Q<id>"`) to a row containing their
+  // entries. Parse the rows and resolve the references.
+  const rows = new Map<number, unknown>()
+  for (const line of text.split('\n')) {
+    if (line === '') {
+      continue
+    }
+    const colonIndex = line.indexOf(':')
+    rows.set(
+      parseInt(line.slice(0, colonIndex), 16),
+      JSON.parse(line.slice(colonIndex + 1))
+    )
+  }
+  const root = resolveFlightValue(rows.get(0), rows) as {
+    t: { t: TransportNode }
+  }
+  return { tree: convertTransportNodeToTreePrefetch(root.t.t) }
+}
+
+function resolveFlightValue(
+  value: unknown,
+  rows: Map<number, unknown>
+): unknown {
+  if (typeof value === 'string' && value.startsWith('$Q')) {
+    const entries = resolveFlightValue(
+      rows.get(parseInt(value.slice(2), 16)),
+      rows
+    ) as Array<[string, unknown]>
+    return new Map(entries)
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => resolveFlightValue(item, rows))
+  }
+  if (value !== null && typeof value === 'object') {
+    const result: Record<string, unknown> = {}
+    for (const key in value) {
+      result[key] = resolveFlightValue(
+        (value as Record<string, unknown>)[key],
+        rows
+      )
+    }
+    return result
+  }
+  return value
+}
+
+function convertTransportNodeToTreePrefetch(node: TransportNode): TreePrefetch {
+  let slots: { [key: string]: TreePrefetch } | null = null
+  if (node.c !== undefined) {
+    slots = {}
+    for (const [parallelRouteKey, child] of node.c) {
+      slots[parallelRouteKey] = convertTransportNodeToTreePrefetch(child)
+    }
+  }
+  return {
+    name: typeof node.s === 'string' ? node.s : node.s.n,
+    prefetchHints: node.h ?? 0,
+    slots,
+  }
 }
 
 describe('prefetch inlining', () => {
