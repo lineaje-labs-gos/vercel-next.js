@@ -601,6 +601,8 @@ Paths you don't return are still served. Next.js prerenders a static shell for t
 
 Params not returned by `generateStaticParams` are rendered on request. If you used `dynamicParams: false` to reject them, call [`notFound()`](/docs/app/api-reference/functions/not-found) in the page when the param doesn't resolve to real data.
 
+If this check runs after the Cache Components [static shell](/docs/app/glossary#static-shell) starts streaming, the response keeps its `200` status and Next.js adds a `noindex` meta tag. If you require an HTTP `404`, validate the path before the response streams, such as in [`proxy`](/docs/app/api-reference/file-conventions/proxy). See [Status Codes](/docs/app/api-reference/file-conventions/loading#status-codes).
+
 ### Await `params` inside `<Suspense>`
 
 To produce the static shell, pass the `params` promise into a [`<Suspense>`](/docs/app/api-reference/file-conventions/loading) boundary instead of awaiting it at the top of the component, so unknown params can still prerender.
