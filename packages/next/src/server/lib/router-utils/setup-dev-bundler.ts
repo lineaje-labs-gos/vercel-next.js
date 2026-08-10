@@ -452,6 +452,7 @@ async function startWatcher(
       const routedPages: string[] = []
       const knownFiles = wp.getTimeInfoEntries()
       const appPaths: Record<string, string[]> = {}
+      const defaultAppPaths = new Set<string>()
       const pageNameSet = new Set<string>()
       const conflictingAppPagePaths = new Set<string>()
       const duplicatePagePaths = new Set<string>()
@@ -708,6 +709,11 @@ async function startWatcher(
               normalizeAppPath(normalizedPageName).replace(/\/layout$/, '')
             )
             layoutRoutes.push({ route: layoutRoute, filePath: fileName })
+            continue
+          }
+
+          if (validFileMatcher.isAppDefaultPage(fileName)) {
+            defaultAppPaths.add(normalizedPageName.replace(/%5F/g, '_'))
             continue
           }
 
@@ -1037,7 +1043,10 @@ async function startWatcher(
         }
       }
 
-      normalizeCatchAllRoutes(appPagePaths)
+      normalizeCatchAllRoutes(appPagePaths, undefined, {
+        strictRouteMatching: nextConfig.experimental.strictRouteMatching,
+        defaultAppPaths,
+      })
       for (const pageAppPaths of Object.values(appPagePaths)) {
         pageAppPaths.sort(compareAppPaths)
       }
