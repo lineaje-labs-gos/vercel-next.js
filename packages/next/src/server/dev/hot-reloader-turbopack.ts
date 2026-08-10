@@ -2259,18 +2259,6 @@ export async function createHotReloaderTurbopack(
     process.exit(1)
   })
 
-  // Tell browsers to refetch RSC (soft refresh, not full page reload).
-  // Skip while there are outstanding compilation errors: an RSC refetch would
-  // 500 and force a full-page navigation, losing client state (e.g. recovering
-  // from a syntax error). A subsequent successful compile/apply fires this
-  // again to refresh.
-  function notifyServerComponentChanges() {
-    if (hasCompilationErrors()) return
-    hotReloader.send({
-      type: HMR_MESSAGE_SENT_TO_BROWSER.SERVER_COMPONENT_CHANGES,
-    })
-  }
-
   if (serverFastRefresh) {
     serverHmrTask = setupServerHmr(project, {
       runtimeRoot,
@@ -2303,7 +2291,7 @@ export async function createHotReloaderTurbopack(
         // the next validation loads the build output afresh.
         dropDevValidationWorker()
 
-        notifyServerComponentChanges()
+        handleServerComponentChanges()
       },
       onApplied: ({ chunkPaths }) => {
         // Clear the evalManifest() shared cache for each updated chunk so the
@@ -2327,7 +2315,7 @@ export async function createHotReloaderTurbopack(
           evictModules: false,
         })
 
-        notifyServerComponentChanges()
+        handleServerComponentChanges()
       },
     })
     void serverHmrTask.catch((error) => {
