@@ -11,7 +11,9 @@ use anyhow::Result;
 use turbo_tasks::{
     ResolvedVc, State, TurboTasks, Vc, unmark_top_level_task_may_leak_eventually_consistent_state,
 };
-use turbo_tasks_backend::{BackendOptions, EvictionMode, GitVersionInfo, TurboTasksBackend};
+use turbo_tasks_backend::{
+    BackendOptions, BackingStorageOptions, EvictionMode, GitVersionInfo, TurboTasksBackend,
+};
 
 /// Creates a fresh per-call persistence directory rooted under
 /// `CARGO_TARGET_TMPDIR/.cache/`, with the test `name` as a prefix so failed
@@ -52,9 +54,11 @@ fn create_tt_with_workers(
                 describe: "test-unversioned",
                 dirty: false,
             },
-            false,
-            true,
-            true,
+            BackingStorageOptions {
+                is_short_session: true,
+                skip_compaction: true,
+                ..Default::default()
+            },
         )
         .unwrap()
         .0,
