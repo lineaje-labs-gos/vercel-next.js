@@ -26,6 +26,7 @@ describe('request-insights-route-preparation', () => {
   const routePreparationSpanType = 'DevRouteMatcherManager.ensureRoute'
   const matcherReloadSpanType = 'DevRouteMatcherManager.reloadMatchers'
   const routeCompilationSpanType = 'DevBundlerService.ensurePage'
+  const routeModuleLoadSpanType = 'LoadComponents.loadRouteModule'
   const routeModulePrepareSpanType = 'RouteModule.prepare'
   const routeManifestLoadSpanType = 'RouteModule.loadManifests'
 
@@ -74,6 +75,10 @@ describe('request-insights-route-preparation', () => {
           insight.spans.some(
             (span) =>
               span.attributes?.['next.span_type'] === routeCompilationSpanType
+          ) &&
+          insight.spans.some(
+            (span) =>
+              span.attributes?.['next.span_type'] === routeModuleLoadSpanType
           )
       )
 
@@ -184,6 +189,9 @@ describe('request-insights-route-preparation', () => {
       (span) =>
         span.attributes?.['next.span_type'] === routeModulePrepareSpanType
     )
+    const routeModuleLoadSpans = request.spans.filter(
+      (span) => span.attributes?.['next.span_type'] === routeModuleLoadSpanType
+    )
     const manifestLoadSpans = request.spans.filter(
       (span) =>
         span.attributes?.['next.span_type'] === routeManifestLoadSpanType
@@ -198,6 +206,18 @@ describe('request-insights-route-preparation', () => {
           'next.span_category': 'nextjs',
           'next.span_name': 'prepare route module',
           'next.span_type': routeModulePrepareSpanType,
+        },
+      }),
+    ])
+    expect(routeModuleLoadSpans).toEqual([
+      expect.objectContaining({
+        name: 'load route module',
+        status: 'ok',
+        traceId: rootSpan?.traceId,
+        attributes: {
+          'next.span_category': 'nextjs',
+          'next.span_name': 'load route module',
+          'next.span_type': routeModuleLoadSpanType,
         },
       }),
     ])
