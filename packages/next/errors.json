@@ -1474,5 +1474,6 @@
   "1473": "Invariant: image cache entry \"%s\" is empty",
   "1474": "Invariant: cannot write an empty buffer to the image cache",
   "1475": "Invariant: no direct app page entry found for %s",
-  "1476": "Not implemented: this behavior is not yet supported when `experimental.concurrentRouterQueue` is enabled."
+  "1476": "Not implemented: this behavior is not yet supported when `experimental.concurrentRouterQueue` is enabled.",
+  "1477": "The following page files do not match any complete route:\\n%s\\n\\nEvery page must be part of at least one complete route. Add matching pages or default files for the sibling parallel route slots, or remove the unreachable pages."
 }
