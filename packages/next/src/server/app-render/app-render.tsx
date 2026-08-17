@@ -306,12 +306,15 @@ import {
   type AdvanceableRenderStage,
 } from './staged-rendering'
 import {
-  anySegmentHasPartialPrefetchingEnabled,
   isPageAllowedToBlock,
   anySegmentNeedsInstantValidationInDev,
   anySegmentNeedsInstantValidationInBuild,
   resolveInstantConfigSamplesForPage,
 } from './instant-validation/instant-config'
+import {
+  anySegmentHasPartialPrefetchingEnabled,
+  resolvePartialPrefetchingConfigFromTree,
+} from './prefetch-config'
 import { warnOnce } from '../../shared/lib/utils/warn-once'
 import {
   createWebDebugChannel,
@@ -750,11 +753,17 @@ async function generateDynamicRSCPayload(
         key: getFlightMetadataKey(requestId),
       })
     )
+    const routePartialPrefetching =
+      await resolvePartialPrefetchingConfigFromTree(
+        loaderTree,
+        ctx.renderOpts.partialPrefetching
+      )
 
     const responseTree = needsFullTree
       ? await createFullTreeForNavigation({
           ctx,
           loaderTree,
+          routePartialPrefetching,
           rscHead,
           injectedCSS: new Set(),
           injectedJS: new Set(),
@@ -765,6 +774,7 @@ async function generateDynamicRSCPayload(
       : await walkTreeWithFlightRouterState({
           ctx,
           loaderTreeToFilter: loaderTree,
+          routePartialPrefetching,
           parentParams: {},
           flightRouterState,
           rscHead,
@@ -2160,11 +2170,17 @@ async function getRSCPayload(
     serveStreamingMetadata,
   })
 
+  const routePartialPrefetching = await resolvePartialPrefetchingConfigFromTree(
+    tree,
+    ctx.renderOpts.partialPrefetching
+  )
+
   const preloadCallbacks: PreloadCallbacks = []
 
   const initialTree = await createFullComponentTree({
     ctx,
     loaderTree: tree,
+    routePartialPrefetching,
     parentParams: {},
     parentOptionalCatchAllParamName: null,
     parentRuntimePrefetchable: false,
@@ -2358,12 +2374,17 @@ async function getErrorRSCPayload(
     )
   )
 
+  const routePartialPrefetching = await resolvePartialPrefetchingConfigFromTree(
+    tree,
+    ctx.renderOpts.partialPrefetching
+  )
+
   const initialTree = await createFullTransportTreeFromLoaderTree(
     tree,
     errorHints,
     errorPrefetchInliningEnabled,
     ctx.missingPrefetchHintPolicy,
-    ctx.renderOpts.partialPrefetching,
+    routePartialPrefetching,
     getDynamicParamFromSegment,
     query
   )
