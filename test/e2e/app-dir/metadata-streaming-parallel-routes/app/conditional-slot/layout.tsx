@@ -11,6 +11,11 @@ export const metadata = {
 // failure.
 export const dynamic = 'force-dynamic'
 
-export default function Layout({ children }) {
+export default function Layout({
+  children,
+  error: _error,
+  login: _login,
+  viewportError: _viewportError,
+}) {
   return children
 }
