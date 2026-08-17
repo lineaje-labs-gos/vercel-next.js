@@ -136,6 +136,41 @@ jobs:
           retention-days: 5
           if-no-files-found: error
 
+      # Runs last in setup so the steps above overlap with npm propagation.
+      - name: wait-for-published-next
+        env:
+          RESOLVED_NEXT_VERSION: ${{ steps.version.outputs.value }}
+          POLL_TIMEOUT_SECONDS: 900
+          POLL_INTERVAL_SECONDS: 15
+        run: |
+          set -euo pipefail
+
+          if [[ "$RESOLVED_NEXT_VERSION" == http* ]]; then
+            echo "next version '$RESOLVED_NEXT_VERSION' is a tarball URL, skipping npm availability check"
+            exit 0
+          fi
+
+          deadline=$((SECONDS + POLL_TIMEOUT_SECONDS))
+          attempt=1
+          while true; do
+            # `pnpm view` warns and exits 0 even when the version is missing,
+            # so availability is decided by the resolved output. Comparing
+            # exactly also makes dist-tags a single resolving check.
+            if [[ "$(pnpm view "next@$RESOLVED_NEXT_VERSION" version 2>/dev/null)" == "$RESOLVED_NEXT_VERSION" ]]; then
+              echo "next@$RESOLVED_NEXT_VERSION is available on npm (attempt $attempt)"
+              break
+            fi
+
+            if (( SECONDS >= deadline )); then
+              echo "::error::Timed out after ${POLL_TIMEOUT_SECONDS}s waiting for next@$RESOLVED_NEXT_VERSION to become available on npm"
+              exit 1
+            fi
+
+            echo "next@$RESOLVED_NEXT_VERSION is not available on npm yet (attempt $attempt), retrying in ${POLL_INTERVAL_SECONDS}s"
+            sleep "$POLL_INTERVAL_SECONDS"
+            attempt=$((attempt + 1))
+          done
+
   test-deploy-webpack:
     name: Run Deploy Tests (Webpack)
     needs: setup
