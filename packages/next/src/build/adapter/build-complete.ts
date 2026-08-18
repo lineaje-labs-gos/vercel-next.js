@@ -2086,6 +2086,7 @@ export async function handleBuildComplete({
     const dynamicRoutes: DynamicRouteItem[] = []
     const dynamicDataRoutes: DynamicRouteItem[] = []
     const dynamicSegmentRoutes: DynamicRouteItem[] = []
+    const appPathnames = new Set(appPageKeys?.map(normalizeAppPath) ?? [])
 
     const getDestinationQuery = (routeKeys: Record<string, string>) => {
       const items = Object.entries(routeKeys ?? {})
@@ -2107,7 +2108,9 @@ export async function handleBuildComplete({
     ]
 
     for (const route of routesManifest.dynamicRoutes) {
-      const shouldLocalize = Boolean(config.i18n && !isAPIRoute(route.page))
+      const shouldLocalize = Boolean(
+        config.i18n && !isAPIRoute(route.page) && !appPathnames.has(route.page)
+      )
 
       const routeRegex = getNamedRouteRegex(route.page, {
         prefixRouteKeys: true,
