@@ -64,6 +64,22 @@ describe('adapter config with i18n routes', () => {
     expect(appRoute?.destination).toBe('/[lang]/endpoint?nxtPlang=$nxtPlang')
   })
 
+  it('links prerenders with locale-like App segments to their App output', async () => {
+    const { outputs }: Parameters<NextAdapter['onBuildComplete']>[0] =
+      await next.readJSON('build-complete.json')
+
+    const appPageOutput = outputs.appPages.find(
+      (output) => output.pathname === '/fr/static'
+    )
+    const prerenderOutput = outputs.prerenders.find(
+      (output) => output.pathname === '/fr/static'
+    )
+
+    expect(appPageOutput).toBeDefined()
+    expect(prerenderOutput).toBeDefined()
+    expect(prerenderOutput?.parentOutputId).toBe(appPageOutput?.id)
+  })
+
   it('does not emit outputs multiple times for a given pathname', async () => {
     const { outputs }: Parameters<NextAdapter['onBuildComplete']>[0] =
       await next.readJSON('build-complete.json')

@@ -1237,7 +1237,7 @@ export async function handleBuildComplete({
           config.i18n?.locales || []
         ).pathname
         const parentOutput =
-          pageOutputMap[normalizedSrcRoute] || appOutputMap[normalizedSrcRoute]
+          appOutputMap[srcRoute] || pageOutputMap[normalizedSrcRoute]
 
         if (!parentOutput && !allowMissing) {
           console.error({
