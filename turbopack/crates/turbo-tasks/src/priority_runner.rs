@@ -336,6 +336,7 @@ mod tests {
 
     use super::*;
 
+    #[cfg(not(miri))]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_cpu_bound_tasks() {
         struct ExecutorImpl;
