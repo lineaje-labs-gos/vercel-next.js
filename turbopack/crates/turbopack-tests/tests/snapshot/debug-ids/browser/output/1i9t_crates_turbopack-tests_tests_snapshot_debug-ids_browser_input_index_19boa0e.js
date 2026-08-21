@@ -1,4 +1,4 @@
-;!function(){try { var e="undefined"!=typeof globalThis?globalThis:"undefined"!=typeof global?global:"undefined"!=typeof window?window:"undefined"!=typeof self?self:{},n=(new e.Error).stack;n&&((e._debugIds|| (e._debugIds={}))[n]="ee80707f-230b-76ad-c42e-fca99f56d165")}catch(e){}}();
+;!function(){try { var e="undefined"!=typeof globalThis?globalThis:"undefined"!=typeof global?global:"undefined"!=typeof window?window:"undefined"!=typeof self?self:{},n=(new e.Error).stack;n&&((e._debugIds|| (e._debugIds={}))[n]="4b829f1b-42a3-992c-f0c7-860d9cb6ab0b")}catch(e){}}();
 (globalThis["TURBOPACK"] || (globalThis["TURBOPACK"] = [])).push([
     "output/1i9t_crates_turbopack-tests_tests_snapshot_debug-ids_browser_input_index_19boa0e.js",
     {"otherChunks":["output/1do3_crates_turbopack-tests_tests_snapshot_debug-ids_browser_input_index_03ibyvs.js"],"runtimeModuleIds":["[project]/turbopack/crates/turbopack-tests/tests/snapshot/debug-ids/browser/input/index.js [test] (ecmascript)"]}
@@ -15,10 +15,6 @@ var CHUNK_BASE_PATH = "";
 var RELATIVE_ROOT_PATH = "../../../../../../..";
 var RUNTIME_PUBLIC_PATH = "";
 const SUPPORT_COMPONENT_CHUNKS = false;
-globalThis["TURBOPACK_CHUNK_UPDATE_LISTENERS"] ||= [];
-var CHUNK_UPDATE_LISTENERS = {
-    push: (registration) => globalThis["TURBOPACK_CHUNK_UPDATE_LISTENERS"].push(registration),
-};
 var ASSET_SUFFIX = "";
 var CROSS_ORIGIN = null;
 var CHUNK_LOAD_RETRY_MAX_ATTEMPTS = 1;
@@ -820,6 +816,34 @@ function loadChunkByUrl(chunkEntry) {
     return loadChunkByUrlInternal(SourceType.Parent, this.m.id, chunkEntry);
 }
 browserContextPrototype.L = loadChunkByUrl;
+const externalScriptCache = new Map();
+function loadScriptByUrl(url) {
+    let promise = externalScriptCache.get(url);
+    if (promise !== undefined) return promise;
+    promise = new Promise((resolve, reject)=>{
+        if (typeof document === 'undefined') {
+            reject(new Error(`Cannot load external script ${url} without a document`));
+            return;
+        }
+        const script = document.createElement('script');
+        if (CROSS_ORIGIN != null) script.crossOrigin = CROSS_ORIGIN;
+        script.src = url;
+        script.onload = ()=>resolve();
+        script.onerror = ()=>{
+            script.remove();
+            reject(new Error(`Failed to load external script ${url}`));
+        };
+        document.head.appendChild(script);
+    });
+    externalScriptCache.set(url, promise);
+    void promise.catch(()=>{
+        if (externalScriptCache.get(url) === promise) {
+            externalScriptCache.delete(url);
+        }
+    });
+    return promise;
+}
+browserContextPrototype.o = loadScriptByUrl;
 // Do not make this async. React relies on referential equality of the returned Promise.
 function loadChunkByUrlInternal(sourceType, sourceData, chunkEntry) {
     if (SUPPORT_COMPONENT_CHUNKS) {
@@ -2132,7 +2156,7 @@ function registerChunk(registration) {
     const chunkListPath = getPathFromScript(chunkListScript);
     // The "chunk" is also registered to finish the loading in the backend
     BACKEND.registerChunk(chunkListPath);
-    CHUNK_UPDATE_LISTENERS.push([
+    globalThis.TURBOPACK_CHUNK_UPDATE_LISTENERS.push([
         chunkListPath,
         handleApply.bind(null, chunkListPath)
     ]);
@@ -2154,6 +2178,7 @@ function registerChunk(registration) {
         markChunkListAsRuntime(chunkListPath);
     }
 }
+globalThis.TURBOPACK_CHUNK_UPDATE_LISTENERS ??= [];
 /**
  * This file contains the runtime code specific to the Turbopack ECMAScript DOM runtime.
  *
@@ -2487,5 +2512,5 @@ chunkListsToRegister.forEach(registerChunkList);
 })();
 
 
-//# debugId=ee80707f-230b-76ad-c42e-fca99f56d165
+//# debugId=4b829f1b-42a3-992c-f0c7-860d9cb6ab0b
 //# sourceMappingURL=1do3_crates_turbopack-tests_tests_snapshot_debug-ids_browser_input_index_19boa0e.js.map
