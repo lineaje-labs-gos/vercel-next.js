@@ -519,6 +519,11 @@ export interface ExperimentalConfig {
    */
   cachedNavigations?: boolean
   dynamicOnHover?: boolean
+  /**
+   * Uses ReactDOM's browser rendering primitive for supported client-rendering
+   * bailouts instead of Next.js' internal bailout error.
+   */
+  reactBrowserBailout?: boolean
   useOffline?: boolean
   optimisticRouting?: boolean
   /**
@@ -2241,6 +2246,7 @@ export const defaultConfig = Object.freeze({
     clientParamParsingOrigins: undefined,
     cachedNavigations: false,
     dynamicOnHover: false,
+    reactBrowserBailout: false,
     useOffline: false,
     varyParams: true,
     optimisticRouting: true,
@@ -2400,6 +2406,7 @@ export interface NextConfigRuntime {
     | 'inlineCss'
     | 'prefetchInlining'
     | 'authInterrupts'
+    | 'reactBrowserBailout'
     | 'useCacheTimeout'
     | 'clientTraceMetadata'
     | 'clientParamParsingOrigins'
@@ -2467,6 +2474,7 @@ export function getNextConfigRuntime(
     inlineCss: ex.inlineCss,
     prefetchInlining: ex.prefetchInlining,
     authInterrupts: ex.authInterrupts,
+    reactBrowserBailout: ex.reactBrowserBailout,
     useCacheTimeout: ex.useCacheTimeout,
     clientTraceMetadata: ex.clientTraceMetadata,
     clientParamParsingOrigins: ex.clientParamParsingOrigins,
