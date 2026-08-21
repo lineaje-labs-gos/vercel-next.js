@@ -144,7 +144,11 @@ describe('Read-only source HMR', () => {
       await retry(async () => {
         if (!process.env.IS_TURBOPACK_TEST) {
           // webpack doesn't automatically refresh the page when a page is added?
-          await browser.refresh()
+          // Don't wait for subresources that may still be compiling in polling mode,
+          // and let retry handle reloads aborted while the route is being restored.
+          await browser
+            .refresh({ waitUntil: 'domcontentloaded' })
+            .catch(() => {})
         }
         expect(await getBrowserBodyText(browser)).toContain('Hello World')
       }, POLL_RETRY_MS)
