@@ -993,7 +993,8 @@ export interface ExperimentalConfig {
    * CommonJS `require()`) keeps its original names. Requires minification with mangling enabled,
    * so `--no-mangling` also turns this off.
    *
-   * Defaults to `false`
+   * Defaults to `true` on canary releases and `false` on stable releases. Only applies to
+   * production builds; has no effect in development mode.
    */
   turbopackMangleExportNames?: boolean
 
@@ -2337,6 +2338,7 @@ export const defaultConfig = Object.freeze({
     turbopackInferModuleSideEffects: true,
     turbopackPluginRuntimeStrategy: 'childProcesses',
     turbopackSharedRuntime: !isStableBuild(),
+    turbopackMangleExportNames: !isStableBuild(),
   },
   htmlLimitedBots: undefined,
   bundlePagesRouterDependencies: false,
