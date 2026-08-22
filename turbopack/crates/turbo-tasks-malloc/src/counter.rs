@@ -29,6 +29,29 @@ struct ThreadLocalCounter {
     allocation_counters: AllocationCounters,
 }
 
+/// Publishes a buffer shortfall to the global counter.
+///
+/// The allocator's `alloc`/`dealloc` are inlined into every allocation site in the binary, so
+/// anything reachable from them is duplicated thousands of times. These two branches run roughly
+/// once per `TARGET_BUFFER` bytes, so keeping them out of line costs a call on a path that
+/// already performs an atomic RMW, while the buffered fast path stays inline.
+#[inline(never)]
+#[cold]
+fn flush_add(buffer: &mut usize, size: usize) {
+    let offset = size - *buffer + TARGET_BUFFER;
+    *buffer = TARGET_BUFFER;
+    ALLOCATED.fetch_add(offset, Ordering::Relaxed);
+}
+
+/// Returns an over-full buffer to the global counter. See [`flush_add`].
+#[inline(never)]
+#[cold]
+fn flush_remove(buffer: &mut usize) {
+    let offset = *buffer - TARGET_BUFFER;
+    *buffer = TARGET_BUFFER;
+    ALLOCATED.fetch_sub(offset, Ordering::Relaxed);
+}
+
 impl ThreadLocalCounter {
     const fn new() -> Self {
         Self {
@@ -42,9 +65,7 @@ impl ThreadLocalCounter {
         if self.buffer >= size {
             self.buffer -= size;
         } else {
-            let offset = size - self.buffer + TARGET_BUFFER;
-            self.buffer = TARGET_BUFFER;
-            ALLOCATED.fetch_add(offset, Ordering::Relaxed);
+            flush_add(&mut self.buffer, size);
         }
     }
 
@@ -53,9 +74,7 @@ impl ThreadLocalCounter {
         self.allocation_counters.deallocation_count += 1;
         self.buffer += size;
         if self.buffer > MAX_BUFFER {
-            let offset = self.buffer - TARGET_BUFFER;
-            self.buffer = TARGET_BUFFER;
-            ALLOCATED.fetch_sub(offset, Ordering::Relaxed);
+            flush_remove(&mut self.buffer);
         }
     }
 
@@ -71,18 +90,14 @@ impl ThreadLocalCounter {
                 if self.buffer >= size {
                     self.buffer -= size;
                 } else {
-                    let offset = size - self.buffer + TARGET_BUFFER;
-                    self.buffer = TARGET_BUFFER;
-                    ALLOCATED.fetch_add(offset, Ordering::Relaxed);
+                    flush_add(&mut self.buffer, size);
                 }
             }
             std::cmp::Ordering::Greater => {
                 let size = old_size - new_size;
                 self.buffer += size;
                 if self.buffer > MAX_BUFFER {
-                    let offset = self.buffer - TARGET_BUFFER;
-                    self.buffer = TARGET_BUFFER;
-                    ALLOCATED.fetch_sub(offset, Ordering::Relaxed);
+                    flush_remove(&mut self.buffer);
                 }
             }
         }
