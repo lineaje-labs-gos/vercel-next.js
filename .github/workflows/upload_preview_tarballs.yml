@@ -24,18 +24,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # The probe needs @vercel/blob for the direct-to-store upload. Installing
-      # it standalone avoids a full repo install.
-      - name: Install @vercel/blob for the probe
-        run: |
-          mkdir -p "$RUNNER_TEMP/probe"
-          cd "$RUNNER_TEMP/probe"
-          npm init -y > /dev/null
-          npm install @vercel/blob@2.3.3 --no-audit --no-fund
-
       - name: Run the exchange probe
         run: node scripts/probe-upload-exchange.js
         env:
-          NODE_PATH: ${{ runner.temp }}/probe/node_modules
-          PREVIEW_DEPLOYMENT_BASE_URL: https://vercel-packages-git-sebbie-upload-oidc-vtest314-next-e2e-tests.vercel.app/next
+          PREVIEW_DEPLOYMENT_BASE_URL: https://vercel-packages-git-sebbie-blob-8d4a20-vtest314-next-e2e-tests.vercel.app/next
           PRODUCTION_BASE_URL: https://vercel-packages.vercel.app/next

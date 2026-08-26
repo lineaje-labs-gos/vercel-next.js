@@ -5,7 +5,6 @@
 // uploads a random text file, then records how production answers the same
 // exchange (no POST endpoint deployed yet; once deployed, this branch's token
 // must be rejected because only canary runs may upload).
-const { put } = require('@vercel/blob/client')
 const crypto = require('node:crypto')
 
 const PREVIEW_BUILDS_AUDIENCE = 'https://vercel-packages.vercel.app'
@@ -80,20 +79,36 @@ async function main() {
       `Preview exchange must succeed for any branch but got ${preview.status}: ${preview.body}`
     )
   }
-  console.info('Preview exchange: 200 (client token received)')
-  const { clientToken } = JSON.parse(preview.body)
+  const previewBody = JSON.parse(preview.body)
+  if (typeof previewBody.url !== 'string') {
+    throw new Error(`Preview exchange returned no presigned url: ${preview.body}`)
+  }
+  // The endpoint must keep serving the previous contract's field while old
+  // clients exist.
+  if (
+    typeof previewBody.clientToken !== 'string' ||
+    !previewBody.clientToken.startsWith('vercel_blob_client_')
+  ) {
+    throw new Error(
+      `Preview exchange dropped the transition clientToken field: ${preview.body}`
+    )
+  }
+  console.info('Preview exchange: 200 (presigned URL + transition clientToken received)')
+  const { url } = previewBody
 
+  const pathname = `next/commits/${PROBE_COMMIT_SHA}/${PROBE_PACKAGE_NAME}.tgz`
   const content = `upload probe ${crypto.randomBytes(32).toString('hex')}\n`
-  const { url } = await put(
-    `next/commits/${PROBE_COMMIT_SHA}/${PROBE_PACKAGE_NAME}.tgz`,
-    content,
-    {
-      access: 'public',
-      token: clientToken,
-      contentType: 'text/plain',
-    }
-  )
-  console.info(`Preview upload succeeded -> ${url}`)
+  const putResponse = await fetch(url, {
+    method: 'PUT',
+    body: content,
+    headers: { 'content-type': 'text/plain' },
+  })
+  if (!putResponse.ok) {
+    throw new Error(
+      `Preview upload failed: ${putResponse.status} ${await putResponse.text()}`
+    )
+  }
+  console.info(`Preview upload succeeded -> ${pathname}`)
 
   const production = await exchangeOidcForUploadToken(
     productionBaseUrl,
