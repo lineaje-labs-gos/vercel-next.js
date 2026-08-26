@@ -37,6 +37,11 @@ describe('Production Usage', () => {
     dependencies: {
       nanoid: '3.1.30',
       'es5-ext': '0.10.53',
+      // Pin to the 0.34 line so Node 18 jobs install sharp as well. A fresh
+      // resolution of next's range picks 0.35, whose prebuilt binaries are
+      // skipped on Node 18, leaving the app without sharp and failing the
+      // trace assertion below.
+      sharp: '0.34.5',
     },
   })
 
