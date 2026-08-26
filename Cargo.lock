@@ -10145,6 +10145,7 @@ dependencies = [
  "mockito",
  "quick_cache",
  "reqwest",
+ "rustc-hash 2.1.1",
  "rustls",
  "serde",
  "tokio",
@@ -10968,6 +10969,16 @@ dependencies = [
  "turbo-tasks-malloc",
  "turbopack-trace-utils",
  "zstd",
+]
+
+[[package]]
+name = "turbopack-trace-server-wasm"
+version = "0.1.0"
+dependencies = [
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "turbopack-trace-server",
 ]
 
 [[package]]
