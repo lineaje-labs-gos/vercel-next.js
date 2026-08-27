@@ -4,7 +4,7 @@ This crate exposes the transport-independent Turbopack trace viewer engine throu
 
 The exported `TurbopackTraceServer` class accepts a complete uncompressed trace as a `Uint8Array`. Its `handleMessage()` method accepts the existing trace viewer client JSON protocol and returns the corresponding server messages in protocol order.
 
-Gzip/zstd decompression and live file tailing remain native-only. Keeping compression out of the WASM dependency graph reduces browser bundle size; compressed input is rejected with a clear error.
+Gzip/zstd decompression and live file tailing are native-only. Keeping compression out of the WASM dependency graph reduces browser bundle size; compressed input is rejected with a clear error.
 
 ## Build
 
