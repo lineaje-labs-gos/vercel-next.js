@@ -10,7 +10,7 @@ pub struct TurbopackTraceServer {
 
 #[napi]
 impl TurbopackTraceServer {
-    /// Loads a complete raw or gzip-compressed trace.
+    /// Loads a complete uncompressed trace.
     #[napi(constructor)]
     pub fn new(trace: Uint8Array) -> Result<Self> {
         let store = read_trace_bytes(trace.as_ref()).map_err(|error| {

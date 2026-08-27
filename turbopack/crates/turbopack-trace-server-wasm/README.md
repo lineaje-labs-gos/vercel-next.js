@@ -2,9 +2,9 @@
 
 This crate exposes the transport-independent Turbopack trace viewer engine through NAPI-RS v3's browser WASM mode. It is intended to let a browser or Web Worker load a completed trace without starting the native localhost WebSocket server.
 
-The exported `TurbopackTraceServer` class accepts a complete raw or gzip-compressed trace as a `Uint8Array`. Its `handleMessage()` method accepts the existing trace viewer client JSON protocol and returns the corresponding server messages in protocol order.
+The exported `TurbopackTraceServer` class accepts a complete uncompressed trace as a `Uint8Array`. Its `handleMessage()` method accepts the existing trace viewer client JSON protocol and returns the corresponding server messages in protocol order.
 
-Zstd-compressed traces and live file tailing remain native-only.
+Gzip/zstd decompression and live file tailing remain native-only. Keeping compression out of the WASM dependency graph reduces browser bundle size; compressed input is rejected with a clear error.
 
 ## Build
 

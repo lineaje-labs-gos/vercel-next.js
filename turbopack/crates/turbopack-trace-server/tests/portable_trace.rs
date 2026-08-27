@@ -1,6 +1,5 @@
-use std::{borrow::Cow, io::Write, sync::Arc};
+use std::{borrow::Cow, sync::Arc};
 
-use flate2::{Compression, write::GzEncoder};
 use turbopack_trace_server::{
     QueryOptions, SortMode, TraceParser, protocol::ProtocolSession, query_spans, read_trace_bytes,
     store_container::StoreContainer,
@@ -70,18 +69,10 @@ fn parses_raw_trace_across_arbitrary_chunks() {
 }
 
 #[test]
-fn parses_gzip_trace() {
-    let raw = raw_trace();
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
-    encoder.write_all(&raw).unwrap();
-    let gzip = encoder.finish().unwrap();
+fn rejects_compressed_or_incomplete_input() {
+    let error = read_trace_bytes(&[0x1f, 0x8b]).err().unwrap().to_string();
+    assert!(error.contains("gzip-compressed traces are not supported"));
 
-    let store = read_trace_bytes(&gzip).unwrap();
-    assert_eq!(root_names(&store), ["test compile"]);
-}
-
-#[test]
-fn rejects_unsupported_or_incomplete_input() {
     let error = read_trace_bytes(&[0x28, 0xb5, 0x2f, 0xfd])
         .err()
         .unwrap()

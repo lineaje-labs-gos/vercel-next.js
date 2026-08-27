@@ -18,7 +18,6 @@ bench = false
 [dependencies]
 anyhow = { workspace = true }
 either = { workspace = true }
-flate2 = { workspace = true }
 hashbrown = { workspace = true, features = ["raw"] }
 indexmap = { workspace = true, features = ["serde"] }
 itertools = { workspace = true }
@@ -34,5 +33,6 @@ turbo-tasks-malloc = { workspace = true, default-features = false }
 turbopack-trace-utils = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+flate2 = { workspace = true }
 tungstenite = { version = "0.21.0" }
 zstd = { version = "0.13.0" }

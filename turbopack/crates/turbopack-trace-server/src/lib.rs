@@ -5,7 +5,6 @@
 use std::path::PathBuf;
 use std::{
     hash::BuildHasherDefault,
-    io::Read,
     sync::Arc,
     thread,
     time::{Duration, Instant},
@@ -64,30 +63,20 @@ pub fn start_turbopack_trace_server(path: PathBuf, port: Option<u16>) -> Arc<Sto
     store
 }
 
-/// Parses a complete raw or gzip-compressed trace held in memory.
+/// Parses a complete uncompressed trace held in memory.
 ///
-/// Zstd is intentionally unsupported here because the browser WASM build does
-/// not include the native zstd decoder used by the file reader.
+/// Compression stays in the native file reader so the browser WASM build does
+/// not include gzip or zstd decoders.
 pub fn read_trace_bytes(bytes: &[u8]) -> anyhow::Result<Arc<StoreContainer>> {
     const GZIP_MAGIC: &[u8] = &[0x1f, 0x8b];
     const ZSTD_MAGIC: &[u8] = &[0x28, 0xb5, 0x2f, 0xfd];
 
+    if bytes.starts_with(GZIP_MAGIC) {
+        anyhow::bail!("gzip-compressed traces are not supported by the WASM trace engine");
+    }
     if bytes.starts_with(ZSTD_MAGIC) {
         anyhow::bail!("zstd-compressed traces are not supported by the WASM trace engine");
     }
-
-    let decoded;
-    let bytes = if bytes.starts_with(GZIP_MAGIC) {
-        let mut decoder = flate2::read::GzDecoder::new(bytes);
-        decoded = {
-            let mut decoded = Vec::new();
-            decoder.read_to_end(&mut decoded)?;
-            decoded
-        };
-        decoded.as_slice()
-    } else {
-        bytes
-    };
 
     let store = Arc::new(StoreContainer::new());
     let mut parser = TraceParser::new(store.clone());
