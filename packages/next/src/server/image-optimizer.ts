@@ -115,12 +115,15 @@ export function canDecodeAvif(concurrency: number | null | undefined): boolean {
     try {
       // Custom libvips builds do not report dependency versions, so the
       // absence of a heif version is treated as unsafe.
-      heifVersion = getSharp(concurrency).versions?.heif ?? null
+      const sharp = getSharp(concurrency)
+      console.log({ sharpVersions: sharp.versions })
+      heifVersion = sharp.versions?.heif ?? null
     } catch {
       // Without sharp no AVIF can be decoded either, so treat it as unsafe
       // and let the image pass through unoptimized.
       heifVersion = null
     }
+    console.log({ heifVersion })
     _avifDecodeSafe = isAvifDecodeSafe(heifVersion)
   }
   return _avifDecodeSafe
