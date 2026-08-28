@@ -177,6 +177,111 @@ describe('mcp-server get_errors tool', () => {
     })
   })
 
+  it('should treat a route error boundary as non-fatal', async () => {
+    const browser = await next.browser('/route-boundary-error')
+
+    await waitForRuntimeError({
+      url: '/route-boundary-error',
+      message: 'Test route boundary error',
+      isFatal: false,
+    })
+    expect(
+      await browser.eval(
+        () => document.querySelector('#route-error-fallback')?.textContent
+      )
+    ).toBe('Test route boundary error')
+
+    await next.patchFile(
+      'app/route-boundary-error/page.tsx',
+      `export default function RouteBoundaryErrorPage() {
+  return <p id="route-error-fixed">Route fixed</p>
+}
+`
+    )
+    await retry(async () => {
+      if (
+        await browser.eval(() =>
+          Boolean(document.querySelector('#route-error-reset'))
+        )
+      ) {
+        await browser.elementByCss('#route-error-reset').click()
+      }
+      expect(
+        await browser.eval(
+          () => document.querySelector('#route-error-fixed')?.textContent
+        )
+      ).toBe('Route fixed')
+
+      const errorsText = await callGetErrors(
+        `test-route-boundary-fixed-${Date.now()}`
+      )
+      const errors = JSON.parse(errorsText)
+      expect(
+        errors.sessionErrors.find(
+          (entry: any) => entry.url === '/route-boundary-error'
+        )
+      ).toBeUndefined()
+    })
+  })
+
+  it('should promote a reused error when it later replaces the app', async () => {
+    const browser = await next.browser('/shared-runtime-error')
+
+    await browser.elementByCss('#log-background-error').click()
+    await waitForRuntimeError({
+      url: '/shared-runtime-error',
+      message: 'Test background runtime error',
+      type: 'console',
+      isFatal: false,
+    })
+
+    await browser.elementByCss('#log-shared-error').click()
+    await waitForRuntimeError({
+      url: '/shared-runtime-error',
+      message: 'Test shared runtime error',
+      type: 'console',
+      isFatal: false,
+    })
+    expect(
+      await browser.eval(
+        () => document.querySelector('#shared-page-content')?.textContent
+      )
+    ).toBe('Page remains rendered')
+
+    await browser.elementByCss('#throw-shared-error').click()
+    await waitForRuntimeError({
+      url: '/shared-runtime-error',
+      message: 'Test shared runtime error',
+      isFatal: true,
+    })
+    await waitForRuntimeError({
+      url: '/shared-runtime-error',
+      message: 'Test background runtime error',
+      type: 'console',
+      isFatal: false,
+    })
+    expect(
+      await browser.eval(
+        () => document.querySelector('#global-error-fallback')?.textContent
+      )
+    ).toBe('Test shared runtime error')
+  })
+
+  it('should classify a non-Error root throw as fatal', async () => {
+    const browser = await next.browser('/non-error-runtime-error')
+
+    await waitForRuntimeError({
+      url: '/non-error-runtime-error',
+      message: 'Test non-Error runtime error',
+      isFatal: true,
+    })
+    expect(
+      await browser.eval(
+        () => document.querySelector('#global-error-fallback')?.textContent
+      )
+    ).toBe('Test non-Error runtime error')
+  })
+
   it('should classify Pages Router runtime errors by whether the app was replaced', async () => {
     const browser = await next.browser('/pages-runtime-error')
 

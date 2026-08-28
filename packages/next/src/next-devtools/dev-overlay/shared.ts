@@ -426,36 +426,43 @@ export function useErrorOverlayReducer(
   ): readonly SupportedErrorEvent[] {
     const ownerStack = getOwnerStack(error)
     const frames = parseStack((error.stack || '') + (ownerStack || ''))
+    const isFatal = isFatalError(error)
     const pendingEvent: SupportedErrorEvent = {
       id,
       error,
       frames,
-      type: isRecoverableError(error)
-        ? 'recoverable'
-        : isConsoleError(error)
-          ? 'console'
-          : 'runtime',
-      isFatal: isFatalError(error),
+      type: isFatal
+        ? 'runtime'
+        : isRecoverableError(error)
+          ? 'recoverable'
+          : isConsoleError(error)
+            ? 'console'
+            : 'runtime',
+      isFatal,
     }
-    const pendingEvents = events.filter((event) => {
-      // Filter out duplicate errors
-      return (
+    const duplicateIndex = events.findIndex(
+      (event) =>
         // SpiderMonkey and JavaScriptCore don't include the error message in the stack.
-        // We don't want to dedupe errors with different messages for which we don't have a good stack
-        '' + event.error !== '' + pendingEvent.error ||
-        (event.error.stack !== pendingEvent.error.stack &&
+        // We don't want to dedupe errors with different messages for which we don't have a good stack.
+        '' + event.error === '' + pendingEvent.error &&
+        (event.error.stack === pendingEvent.error.stack ||
           // TODO: Let ReactDevTools control deduping instead?
-          getStackIgnoringStrictMode(event.error.stack) !==
-            getStackIgnoringStrictMode(pendingEvent.error.stack)) ||
-        getOwnerStack(event.error) !== getOwnerStack(pendingEvent.error)
-      )
-    })
-    // If there's nothing filtered out, the event is a brand new error
-    if (pendingEvents.length === events.length) {
-      pendingEvents.push(pendingEvent)
-      return pendingEvents
+          getStackIgnoringStrictMode(event.error.stack) ===
+            getStackIgnoringStrictMode(pendingEvent.error.stack)) &&
+        getOwnerStack(event.error) === getOwnerStack(pendingEvent.error)
+    )
+
+    if (duplicateIndex === -1) {
+      return [...events, pendingEvent]
     }
-    // Otherwise remain the same events
+
+    const duplicate = events[duplicateIndex]
+    if (pendingEvent.isFatal && !duplicate.isFatal) {
+      return events.map((event, index) =>
+        index === duplicateIndex ? { ...pendingEvent, id: duplicate.id } : event
+      )
+    }
+
     return events
   }
 
