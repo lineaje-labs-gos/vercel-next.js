@@ -31,6 +31,39 @@ describe('mcp-server get_errors tool', () => {
     return result.result?.content?.[0]?.text
   }
 
+  async function waitForRuntimeError({
+    url,
+    message,
+    type = 'runtime',
+    isFatal,
+  }: {
+    url: string
+    message?: string
+    type?: 'runtime' | 'recoverable' | 'console'
+    isFatal: boolean
+  }) {
+    let runtimeError: any = null
+
+    await retry(async () => {
+      const errorsText = await callGetErrors(`test-runtime-${Date.now()}`)
+      const errors = JSON.parse(errorsText)
+      const session = errors.sessionErrors.find(
+        (entry: any) => entry.url === url
+      )
+      expect(session).toBeDefined()
+      runtimeError = session.runtimeErrors.find((error: any) =>
+        message ? error.message === message : error.type === type
+      )
+      expect(runtimeError).toMatchObject({
+        type,
+        isFatal,
+        ...(message ? { message } : {}),
+      })
+    })
+
+    return runtimeError
+  }
+
   it('should handle no browser sessions gracefully', async () => {
     const errorsText = await callGetErrors('test-no-session')
     const errors = JSON.parse(errorsText)
@@ -54,8 +87,7 @@ describe('mcp-server get_errors tool', () => {
   })
 
   it('should capture runtime errors with source-mapped stack frames', async () => {
-    const browser = await next.browser('/')
-    await browser.elementByCss('a[href="/runtime-error"]').click()
+    await next.browser('/runtime-error')
 
     let errors: any = null
     await retry(async () => {
@@ -74,6 +106,7 @@ describe('mcp-server get_errors tool', () => {
           type: 'runtime',
           errorName: 'Error',
           message: 'Test runtime error',
+          isFatal: true,
           stack: expect.arrayContaining([
             expect.objectContaining({
               file: expect.stringContaining('app/runtime-error/page.tsx'),
@@ -82,6 +115,131 @@ describe('mcp-server get_errors tool', () => {
           ]),
         },
       ],
+    })
+  })
+
+  it('should classify App Router runtime errors by whether the app was replaced', async () => {
+    const browser = await next.browser('/client-runtime-error')
+
+    await waitForRuntimeError({
+      url: '/client-runtime-error',
+      message: 'Test client runtime error',
+      isFatal: true,
+    })
+
+    await browser.loadPage(`${next.url}/caught-runtime-error`)
+    await waitForRuntimeError({
+      url: '/caught-runtime-error',
+      message: 'Test caught runtime error',
+      isFatal: false,
+    })
+    expect(
+      await browser.eval(
+        () => document.querySelector('#caught-fallback')?.textContent
+      )
+    ).toBe('Caught fallback')
+
+    await browser.loadPage(`${next.url}/event-runtime-error`)
+    await browser.elementByCss('#event-error').click()
+    await waitForRuntimeError({
+      url: '/event-runtime-error',
+      message: 'Test event runtime error',
+      isFatal: false,
+    })
+    expect(
+      await browser.eval(
+        () => document.querySelector('#event-page-content')?.textContent
+      )
+    ).toBe('Page remains rendered')
+
+    await browser.loadPage(`${next.url}/rejection-runtime-error`)
+    await browser.elementByCss('#rejection-error').click()
+    await waitForRuntimeError({
+      url: '/rejection-runtime-error',
+      message: 'Test unhandled rejection',
+      isFatal: false,
+    })
+
+    await browser.loadPage(`${next.url}/console-runtime-error`)
+    await browser.elementByCss('#console-error').click()
+    await waitForRuntimeError({
+      url: '/console-runtime-error',
+      message: 'Test console error',
+      type: 'console',
+      isFatal: false,
+    })
+
+    await browser.loadPage(`${next.url}/hydration-runtime-error`)
+    await waitForRuntimeError({
+      url: '/hydration-runtime-error',
+      type: 'recoverable',
+      isFatal: false,
+    })
+  })
+
+  it('should classify Pages Router runtime errors by whether the app was replaced', async () => {
+    const browser = await next.browser('/pages-runtime-error')
+
+    await waitForRuntimeError({
+      url: '/pages-runtime-error',
+      message: 'Test Pages runtime error',
+      isFatal: true,
+    })
+
+    await browser.loadPage(`${next.url}/pages-caught-runtime-error`)
+    await waitForRuntimeError({
+      url: '/pages-caught-runtime-error',
+      message: 'Test Pages caught runtime error',
+      isFatal: false,
+    })
+    expect(
+      await browser.eval(
+        () => document.querySelector('#pages-caught-fallback')?.textContent
+      )
+    ).toBe('Caught fallback')
+
+    await browser.loadPage(`${next.url}/pages-event-runtime-error`)
+    await browser.elementByCss('#pages-event-error').click()
+    await waitForRuntimeError({
+      url: '/pages-event-runtime-error',
+      message: 'Test Pages event runtime error',
+      isFatal: false,
+    })
+    expect(
+      await browser.eval(
+        () => document.querySelector('#pages-event-page-content')?.textContent
+      )
+    ).toBe('Page remains rendered')
+  })
+
+  it('should clear fatality with the runtime error after HMR recovery', async () => {
+    const browser = await next.browser('/hmr-runtime-error')
+
+    await waitForRuntimeError({
+      url: '/hmr-runtime-error',
+      message: 'Test HMR runtime error',
+      isFatal: true,
+    })
+
+    await next.patchFile(
+      'app/hmr-runtime-error/page.tsx',
+      `'use client'\n\nexport default function HmrRuntimeErrorPage() {\n  return <p id="hmr-fixed">HMR fixed</p>\n}\n`
+    )
+
+    await retry(async () => {
+      expect(
+        await browser.eval(
+          () => document.querySelector('#hmr-fixed')?.textContent
+        )
+      ).toBe('HMR fixed')
+
+      const errorsText = await callGetErrors(`test-hmr-fixed-${Date.now()}`)
+      const errors = JSON.parse(errorsText)
+      expect(
+        errors.sessionErrors.find(
+          (entry: any) => entry.url === '/hmr-runtime-error'
+        )
+      ).toBeUndefined()
     })
   })
 
@@ -123,8 +281,6 @@ describe('mcp-server get_errors tool', () => {
     ])
 
     try {
-      // Wait for server to be ready
-      await new Promise((resolve) => setTimeout(resolve, 1000))
       let errors: any = null
       await retry(async () => {
         const sessionId = 'test-multi-' + Date.now()
@@ -152,6 +308,7 @@ describe('mcp-server get_errors tool', () => {
           {
             type: 'runtime',
             message: 'Test runtime error',
+            isFatal: true,
             stack: expect.arrayContaining([
               expect.objectContaining({
                 file: expect.stringContaining('app/runtime-error/page.tsx'),
@@ -168,6 +325,7 @@ describe('mcp-server get_errors tool', () => {
           {
             type: 'runtime',
             message: 'Test runtime error 2',
+            isFatal: true,
             stack: expect.arrayContaining([
               expect.objectContaining({
                 file: expect.stringContaining('app/runtime-error-2/page.tsx'),

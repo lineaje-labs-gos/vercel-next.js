@@ -416,6 +416,7 @@ export function useErrorOverlayReducer(
   routerType: 'pages' | 'app',
   getOwnerStack: (error: Error) => string | null | undefined,
   isRecoverableError: (error: Error) => boolean,
+  isFatalError: (error: Error) => boolean,
   enableCacheIndicator: boolean
 ) {
   function pushErrorFilterDuplicates(
@@ -434,6 +435,7 @@ export function useErrorOverlayReducer(
         : isConsoleError(error)
           ? 'console'
           : 'runtime',
+      isFatal: isFatalError(error),
     }
     const pendingEvents = events.filter((event) => {
       // Filter out duplicate errors

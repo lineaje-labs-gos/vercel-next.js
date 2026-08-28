@@ -46,6 +46,7 @@ interface FormattedRuntimeError {
   type: string
   errorName: string
   message: string
+  isFatal: boolean
   stack: StackFrame[]
 }
 
@@ -142,6 +143,7 @@ async function formatRuntimeErrorsToObjects(
       type: error.type,
       errorName,
       message: errorMsg,
+      isFatal: error.isFatal,
       stack,
     })
   }

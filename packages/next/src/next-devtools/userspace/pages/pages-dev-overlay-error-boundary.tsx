@@ -1,4 +1,5 @@
 import React from 'react'
+import { markErrorAsFatal } from '../app/errors/stitched-error'
 
 type PagesDevOverlayErrorBoundaryProps = {
   children?: React.ReactNode
@@ -14,8 +15,9 @@ export class PagesDevOverlayErrorBoundary extends React.PureComponent<
   state = { hasError: false }
 
   static getDerivedStateFromError(
-    _: unknown
+    error: unknown
   ): Partial<PagesDevOverlayErrorBoundaryState> {
+    markErrorAsFatal(error)
     return { hasError: true }
   }
 

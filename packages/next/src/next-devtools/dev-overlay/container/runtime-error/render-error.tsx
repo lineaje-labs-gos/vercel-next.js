@@ -13,6 +13,8 @@ export type SupportedErrorEvent = {
   error: Error
   frames: readonly StackFrame[]
   type: 'runtime' | 'recoverable' | 'console'
+  /** Whether the error caused Next.js to replace the application UI. */
+  isFatal: boolean
 }
 
 type Props = {
