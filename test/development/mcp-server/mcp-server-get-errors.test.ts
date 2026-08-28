@@ -226,6 +226,29 @@ describe('mcp-server get_errors tool', () => {
 
   it('should promote a reused error when it later replaces the app', async () => {
     const browser = await next.browser('/shared-runtime-error')
+    const getOverlayErrorType = () =>
+      browser.eval(() => {
+        const portal = Array.from(
+          document.querySelectorAll('nextjs-portal')
+        ).find((candidate) =>
+          candidate.shadowRoot?.querySelector('#nextjs__container_errors_label')
+        )
+        return (
+          portal?.shadowRoot?.querySelector('#nextjs__container_errors_label')
+            ?.textContent ?? null
+        )
+      })
+
+    await browser.elementByCss('#log-shared-error').click()
+    await waitForRuntimeError({
+      url: '/shared-runtime-error',
+      message: 'Test shared runtime error',
+      type: 'console',
+      isFatal: false,
+    })
+    await retry(async () => {
+      expect(await getOverlayErrorType()).toBe('Console Error')
+    })
 
     await browser.elementByCss('#log-background-error').click()
     await waitForRuntimeError({
@@ -235,13 +258,6 @@ describe('mcp-server get_errors tool', () => {
       isFatal: false,
     })
 
-    await browser.elementByCss('#log-shared-error').click()
-    await waitForRuntimeError({
-      url: '/shared-runtime-error',
-      message: 'Test shared runtime error',
-      type: 'console',
-      isFatal: false,
-    })
     expect(
       await browser.eval(
         () => document.querySelector('#shared-page-content')?.textContent
@@ -259,6 +275,9 @@ describe('mcp-server get_errors tool', () => {
       message: 'Test background runtime error',
       type: 'console',
       isFatal: false,
+    })
+    await retry(async () => {
+      expect(await getOverlayErrorType()).toBe('Runtime Error')
     })
     expect(
       await browser.eval(

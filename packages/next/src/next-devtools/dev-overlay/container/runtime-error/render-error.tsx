@@ -57,7 +57,12 @@ const RenderRuntimeError = ({ children, state, isAppDir }: Props) => {
       const e = errors[idx]
       const { id } = e
       if (id in lookups) {
-        ready.push(lookups[id])
+        const resolved = lookups[id]
+        // Dedupe can promote an existing event from console to runtime while
+        // preserving its ID. Reuse the resolved frames with the latest type.
+        ready.push(
+          resolved.type === e.type ? resolved : { ...resolved, type: e.type }
+        )
         continue
       }
 

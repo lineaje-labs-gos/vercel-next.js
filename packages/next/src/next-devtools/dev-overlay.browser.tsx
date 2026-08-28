@@ -90,6 +90,7 @@ export interface Dispatcher {
 
 type Dispatch = ReturnType<typeof useErrorOverlayReducer>[1]
 const eventQueue = new EventQueue<Dispatch>()
+let consumeErrorFatalityForEvent: (error: Error) => boolean = () => false
 
 function loadDevOverlayUX() {
   const { DevOverlay, FontStyles } =
@@ -194,12 +195,14 @@ export const dispatcher: Dispatcher = {
     dispatch({
       type: ACTION_UNHANDLED_ERROR,
       reason: error,
+      isFatal: consumeErrorFatalityForEvent(error),
     })
   }),
   onUnhandledRejection: createQueuable((dispatch: Dispatch, error: Error) => {
     dispatch({
       type: ACTION_UNHANDLED_REJECTION,
       reason: error,
+      isFatal: consumeErrorFatalityForEvent(error),
     })
   }),
   openErrorOverlay: createQueuable((dispatch: Dispatch) => {
@@ -258,7 +261,6 @@ function DevOverlayRoot({
   getOwnerStack,
   getSquashedHydrationErrorDetails,
   isRecoverableError,
-  consumeErrorFatality,
   routerType,
   shadowRoot,
 }: {
@@ -266,7 +268,6 @@ function DevOverlayRoot({
   getOwnerStack: (error: Error) => string | null | undefined
   getSquashedHydrationErrorDetails: (error: Error) => HydrationErrorState | null
   isRecoverableError: (error: Error) => boolean
-  consumeErrorFatality: (error: Error) => boolean
   routerType: 'app' | 'pages'
   shadowRoot: ShadowRoot
 }) {
@@ -274,7 +275,6 @@ function DevOverlayRoot({
     routerType,
     getOwnerStack,
     isRecoverableError,
-    consumeErrorFatality,
     enableCacheIndicator
   )
 
@@ -357,6 +357,8 @@ export function renderAppDevOverlay(
   consumeErrorFatality: (error: Error) => boolean,
   enableCacheIndicator: boolean
 ): void {
+  consumeErrorFatalityForEvent = consumeErrorFatality
+
   if (isPagesMounted) {
     // Switching between App and Pages Router is always a hard navigation
     // TODO: Support soft navigation between App and Pages Router
@@ -404,7 +406,6 @@ export function renderAppDevOverlay(
           getOwnerStack={getOwnerStack}
           getSquashedHydrationErrorDetails={getSquashedHydrationErrorDetailsApp}
           isRecoverableError={isRecoverableError}
-          consumeErrorFatality={consumeErrorFatality}
           routerType="app"
           shadowRoot={shadowRoot}
         />
@@ -423,6 +424,8 @@ export function renderPagesDevOverlay(
   isRecoverableError: (error: Error) => boolean,
   consumeErrorFatality: (error: Error) => boolean
 ): void {
+  consumeErrorFatalityForEvent = consumeErrorFatality
+
   if (isAppMounted) {
     // Switching between App and Pages Router is always a hard navigation
     // TODO: Support soft navigation between App and Pages Router
@@ -476,7 +479,6 @@ export function renderPagesDevOverlay(
           getOwnerStack={getOwnerStack}
           getSquashedHydrationErrorDetails={getSquashedHydrationErrorDetails}
           isRecoverableError={isRecoverableError}
-          consumeErrorFatality={consumeErrorFatality}
           routerType="pages"
           shadowRoot={shadowRoot}
         />

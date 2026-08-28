@@ -178,10 +178,12 @@ interface FastRefreshAction {
 interface UnhandledErrorAction {
   type: typeof ACTION_UNHANDLED_ERROR
   reason: Error
+  isFatal: boolean
 }
 interface UnhandledRejectionAction {
   type: typeof ACTION_UNHANDLED_REJECTION
   reason: Error
+  isFatal: boolean
 }
 
 interface DebugInfoAction {
@@ -416,17 +418,16 @@ export function useErrorOverlayReducer(
   routerType: 'pages' | 'app',
   getOwnerStack: (error: Error) => string | null | undefined,
   isRecoverableError: (error: Error) => boolean,
-  consumeErrorFatality: (error: Error) => boolean,
   enableCacheIndicator: boolean
 ) {
   function pushErrorFilterDuplicates(
     events: readonly SupportedErrorEvent[],
     id: number,
-    error: Error
+    error: Error,
+    isFatal: boolean
   ): readonly SupportedErrorEvent[] {
     const ownerStack = getOwnerStack(error)
     const frames = parseStack((error.stack || '') + (ownerStack || ''))
-    const isFatal = consumeErrorFatality(error)
     const pendingEvent: SupportedErrorEvent = {
       id,
       error,
@@ -514,7 +515,8 @@ export function useErrorOverlayReducer(
                 errors: pushErrorFilterDuplicates(
                   state.errors,
                   state.nextId,
-                  action.reason
+                  action.reason,
+                  action.isFatal
                 ),
               }
             }
@@ -527,7 +529,8 @@ export function useErrorOverlayReducer(
                   errors: pushErrorFilterDuplicates(
                     state.errors,
                     state.nextId,
-                    action.reason
+                    action.reason,
+                    action.isFatal
                   ),
                 },
               }
