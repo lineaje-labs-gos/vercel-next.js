@@ -447,7 +447,15 @@ function createRuntimePrerenderParams(
     }
   }
 
-  return stagedRendering.delayUntilStage(paramsStage, 'params', userspaceParams)
+  if (stagedRendering.finalStage! < paramsStage) {
+    return makeHangingParams(userspaceParams, workStore, workUnitStore)
+  } else {
+    return stagedRendering.delayUntilStage(
+      paramsStage,
+      'params',
+      userspaceParams
+    )
+  }
 }
 
 function createRenderParamsForPage(

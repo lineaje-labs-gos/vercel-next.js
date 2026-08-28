@@ -2164,13 +2164,8 @@ export async function cache(
 
   switch (workUnitStore.type) {
     case 'prerender-runtime':
-    // We're currently only using `dynamicAccessAsyncStorage` for params,
-    // which are always available in a runtime prerender, so they will never hang,
-    // effectively making the tracking below a no-op.
-    // However, a runtime prerender shares a lot of the semantics with a static prerender,
-    // and might need to follow this codepath in the future
-    // if we start using `dynamicAccessAsyncStorage` for other APIs.
-    //
+    // A runtime prerender may be a runtime shell, which does not have acces to
+    // params/searchParams, so we want to apply the same dynamic access logic as static prerenders.
     // fallthrough
     case 'prerender':
       if (!isPageOrLayoutSegmentFunction) {
