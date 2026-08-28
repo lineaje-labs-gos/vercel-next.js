@@ -1,5 +1,11 @@
 import * as matchers from 'jest-extended'
 import { installGate } from './lib/gate/runtime'
+import { createSkipDeployment } from './lib/skip-deployment'
+
+globalThis.skipDeployment = createSkipDeployment({
+  isDeployment: () => process.env.NEXT_TEST_MODE === 'deploy',
+  skipTest: (name) => globalThis.it.skip(name, () => {}),
+})
 
 expect.extend(matchers)
 
