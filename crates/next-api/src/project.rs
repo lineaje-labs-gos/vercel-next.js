@@ -984,7 +984,7 @@ impl Project {
             .await?
             .get(entry_key)
             .unwrap_or_else(|| ServerHmrChunkLists::new(vec![]).resolved_cell());
-        Ok(chunk_lists.await?)
+        chunk_lists.await
     }
 }
 
