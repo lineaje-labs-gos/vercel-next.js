@@ -116,16 +116,6 @@ impl ServerHmrEntryMap {
     pub fn get(&self, entry_key: &str) -> Option<ResolvedVc<ServerHmrChunkLists>> {
         self.entries.get_untracked().0.get(entry_key).copied()
     }
-
-    /// Drops every registration, e.g. when project options change and the chunk lists they were
-    /// built from no longer describe the project.
-    pub fn clear(&self) {
-        self.entries.update_conditionally(|entries| {
-            let was_populated = !entries.0.is_empty();
-            entries.0.clear();
-            was_populated
-        });
-    }
 }
 
 #[turbo_tasks::value(serialization = "skip", shared)]

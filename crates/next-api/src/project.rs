@@ -733,10 +733,6 @@ impl ProjectContainer {
                         .as_str(),
                 );
             }
-            // Registered entries hold chunk lists from the current project options. Drop them
-            // before invalidating the project so a config or environment update cannot expose
-            // stale ownership while the affected endpoints are rebuilt.
-            this.server_hmr_entry_map.await?.clear();
             this.options_state.set(Some(new_options));
             let project = project_operation(self)
                 .resolve()
