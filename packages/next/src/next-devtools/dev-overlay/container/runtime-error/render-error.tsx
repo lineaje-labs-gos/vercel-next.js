@@ -43,7 +43,10 @@ const RenderRuntimeError = ({ children, state, isAppDir }: Props) => {
   const { errors } = state
 
   const [lookups, setLookups] = useState<{
-    [eventId: string]: ReadyRuntimeError
+    [eventId: string]: {
+      event: SupportedErrorEvent
+      resolved: ReadyRuntimeError
+    }
   }>({})
 
   const [runtimeErrors, nextError] = useMemo<
@@ -57,12 +60,14 @@ const RenderRuntimeError = ({ children, state, isAppDir }: Props) => {
       const e = errors[idx]
       const { id } = e
       if (id in lookups) {
-        const resolved = lookups[id]
-        // Dedupe can promote an existing event from console to runtime while
-        // preserving its ID. Reuse the resolved frames with the latest type.
-        ready.push(
-          resolved.type === e.type ? resolved : { ...resolved, type: e.type }
-        )
+        const lookup = lookups[id]
+        if (lookup.event !== e) {
+          // Dedupe promotion preserves the ID while replacing the event.
+          // Resolve the replacement instead of reusing stale frames.
+          next = e
+          break
+        }
+        ready.push(lookup.resolved)
         continue
       }
 
@@ -80,7 +85,10 @@ const RenderRuntimeError = ({ children, state, isAppDir }: Props) => {
 
     const resolved = getErrorByType(nextError, isAppDir)
     // eslint-disable-next-line react-hooks/set-state-in-effect -- TODO: fetch-while-rendering
-    setLookups((m) => ({ ...m, [resolved.id]: resolved }))
+    setLookups((m) => ({
+      ...m,
+      [resolved.id]: { event: nextError, resolved },
+    }))
   }, [nextError, isAppDir])
 
   const totalErrorCount = errors.length
