@@ -5,8 +5,8 @@ import './app-webpack'
 import { renderAppDevOverlay } from 'next/dist/compiled/next-devtools'
 import { appBootstrap } from './app-bootstrap'
 import {
+  consumeErrorFatality,
   getOwnerStack,
-  isFatalError,
 } from '../next-devtools/userspace/app/errors/stitched-error'
 import { isRecoverableError } from './react-client-callbacks/on-recoverable-error'
 
@@ -23,7 +23,7 @@ appBootstrap((assetPrefix) => {
     renderAppDevOverlay(
       getOwnerStack,
       isRecoverableError,
-      isFatalError,
+      consumeErrorFatality,
       enableCacheIndicator
     )
   }

@@ -340,9 +340,12 @@ describe('mcp-server get_errors tool', () => {
 
       const errorsText = await callGetErrors(`test-hmr-fixed-${Date.now()}`)
       const errors = JSON.parse(errorsText)
+      const session = errors.sessionErrors.find(
+        (entry: any) => entry.url === '/hmr-runtime-error'
+      )
       expect(
-        errors.sessionErrors.find(
-          (entry: any) => entry.url === '/hmr-runtime-error'
+        session?.runtimeErrors.find(
+          (error: any) => error.message === 'Test HMR runtime error'
         )
       ).toBeUndefined()
     })

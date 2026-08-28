@@ -416,7 +416,7 @@ export function useErrorOverlayReducer(
   routerType: 'pages' | 'app',
   getOwnerStack: (error: Error) => string | null | undefined,
   isRecoverableError: (error: Error) => boolean,
-  isFatalError: (error: Error) => boolean,
+  consumeErrorFatality: (error: Error) => boolean,
   enableCacheIndicator: boolean
 ) {
   function pushErrorFilterDuplicates(
@@ -426,7 +426,7 @@ export function useErrorOverlayReducer(
   ): readonly SupportedErrorEvent[] {
     const ownerStack = getOwnerStack(error)
     const frames = parseStack((error.stack || '') + (ownerStack || ''))
-    const isFatal = isFatalError(error)
+    const isFatal = consumeErrorFatality(error)
     const pendingEvent: SupportedErrorEvent = {
       id,
       error,

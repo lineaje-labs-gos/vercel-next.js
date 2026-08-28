@@ -10,8 +10,8 @@ export function markErrorAsFatal(error: unknown): void {
   }
 }
 
-export function isFatalError(error: Error): boolean {
-  return fatalErrors.has(error)
+export function consumeErrorFatality(error: Error): boolean {
+  return fatalErrors.delete(error)
 }
 
 export function getOwnerStack(error: Error): string | null | undefined {

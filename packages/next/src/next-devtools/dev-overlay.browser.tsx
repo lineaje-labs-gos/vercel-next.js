@@ -258,7 +258,7 @@ function DevOverlayRoot({
   getOwnerStack,
   getSquashedHydrationErrorDetails,
   isRecoverableError,
-  isFatalError,
+  consumeErrorFatality,
   routerType,
   shadowRoot,
 }: {
@@ -266,7 +266,7 @@ function DevOverlayRoot({
   getOwnerStack: (error: Error) => string | null | undefined
   getSquashedHydrationErrorDetails: (error: Error) => HydrationErrorState | null
   isRecoverableError: (error: Error) => boolean
-  isFatalError: (error: Error) => boolean
+  consumeErrorFatality: (error: Error) => boolean
   routerType: 'app' | 'pages'
   shadowRoot: ShadowRoot
 }) {
@@ -274,7 +274,7 @@ function DevOverlayRoot({
     routerType,
     getOwnerStack,
     isRecoverableError,
-    isFatalError,
+    consumeErrorFatality,
     enableCacheIndicator
   )
 
@@ -354,7 +354,7 @@ function getSquashedHydrationErrorDetailsApp() {
 export function renderAppDevOverlay(
   getOwnerStack: (error: Error) => string | null | undefined,
   isRecoverableError: (error: Error) => boolean,
-  isFatalError: (error: Error) => boolean,
+  consumeErrorFatality: (error: Error) => boolean,
   enableCacheIndicator: boolean
 ): void {
   if (isPagesMounted) {
@@ -404,7 +404,7 @@ export function renderAppDevOverlay(
           getOwnerStack={getOwnerStack}
           getSquashedHydrationErrorDetails={getSquashedHydrationErrorDetailsApp}
           isRecoverableError={isRecoverableError}
-          isFatalError={isFatalError}
+          consumeErrorFatality={consumeErrorFatality}
           routerType="app"
           shadowRoot={shadowRoot}
         />
@@ -421,7 +421,7 @@ export function renderPagesDevOverlay(
     error: Error
   ) => HydrationErrorState | null,
   isRecoverableError: (error: Error) => boolean,
-  isFatalError: (error: Error) => boolean
+  consumeErrorFatality: (error: Error) => boolean
 ): void {
   if (isAppMounted) {
     // Switching between App and Pages Router is always a hard navigation
@@ -476,7 +476,7 @@ export function renderPagesDevOverlay(
           getOwnerStack={getOwnerStack}
           getSquashedHydrationErrorDetails={getSquashedHydrationErrorDetails}
           isRecoverableError={isRecoverableError}
-          isFatalError={isFatalError}
+          consumeErrorFatality={consumeErrorFatality}
           routerType="pages"
           shadowRoot={shadowRoot}
         />
