@@ -54,6 +54,7 @@ async function getCodeHashes(
         expect(valuesWithoutCodeHash.map((v) => v.page)).toMatchInlineSnapshot(`
          [
            "app/deopt-custom/page",
+           "app/deopt-nxt-deployment-id/page",
            "app/use-server/page",
          ]
         `)
@@ -70,14 +71,6 @@ async function getCodeHashes(
           )
         ).toMatchInlineSnapshot(`
          {
-           "app/deopt-next-deployment-id/page": [
-             "NEXT_PRIVATE_DEBUG_CACHE",
-             "__NEXT_DEV_SERVER",
-             "NEXT_PRIVATE_DEBUG_RUNTIME_DATA",
-             "NEXT_OTEL_VERBOSE",
-             "NEXT_OTEL_PERFORMANCE_PREFIX",
-             "NEXT_SERVER_ACTIONS_ENCRYPTION_KEY",
-           ],
            "app/env-dynamic/page": [
              "NEXT_PRIVATE_DEBUG_CACHE",
              "__NEXT_DEV_SERVER",
