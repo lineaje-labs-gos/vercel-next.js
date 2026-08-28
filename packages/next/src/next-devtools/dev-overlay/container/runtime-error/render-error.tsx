@@ -61,17 +61,21 @@ const RenderRuntimeError = ({ children, state, isAppDir }: Props) => {
       const { id } = e
       if (id in lookups) {
         const lookup = lookups[id]
+        const resolved = lookup.resolved
         if (lookup.event !== e) {
           // Dedupe promotion preserves the ID while replacing the event.
-          // Resolve the replacement instead of reusing stale frames.
-          next = e
-          break
+          // Keep the overlay mounted while resolving the replacement frames.
+          if (next === null) next = e
+          ready.push(
+            resolved.type === e.type ? resolved : { ...resolved, type: e.type }
+          )
+          continue
         }
-        ready.push(lookup.resolved)
+        ready.push(resolved)
         continue
       }
 
-      next = e
+      if (next === null) next = e
       break
     }
 

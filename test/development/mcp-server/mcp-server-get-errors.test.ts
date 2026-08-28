@@ -249,6 +249,18 @@ describe('mcp-server get_errors tool', () => {
     await retry(async () => {
       expect(await getOverlayErrorType()).toBe('Console Error')
     })
+    await browser.eval(() => {
+      const portal = Array.from(
+        document.querySelectorAll('nextjs-portal')
+      ).find((candidate) =>
+        candidate.shadowRoot?.querySelector('#nextjs__container_errors_label')
+      )
+      const label = portal?.shadowRoot?.querySelector(
+        '#nextjs__container_errors_label'
+      )
+      if (!label) throw new Error('Expected the error overlay label')
+      Reflect.set(window, '__mcpErrorOverlayLabel', label)
+    })
 
     await browser.elementByCss('#log-background-error').click()
     await waitForRuntimeError({
@@ -279,6 +291,12 @@ describe('mcp-server get_errors tool', () => {
     await retry(async () => {
       expect(await getOverlayErrorType()).toBe('Runtime Error')
     })
+    expect(
+      await browser.eval(() => {
+        const label = Reflect.get(window, '__mcpErrorOverlayLabel')
+        return label instanceof Element && label.isConnected
+      })
+    ).toBe(true)
     expect(
       await browser.eval(
         () => document.querySelector('#global-error-fallback')?.textContent
