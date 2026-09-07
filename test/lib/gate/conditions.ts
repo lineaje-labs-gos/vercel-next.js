@@ -94,6 +94,10 @@ export const conditions: Record<string, Condition> = {
     'running against a real deployment',
     () => getGateTestContext().mode === 'deploy'
   ),
+  adapter: staticCondition(
+    'the deployment adapter is enabled (`NEXT_ENABLE_ADAPTER=1`)',
+    () => process.env.NEXT_ENABLE_ADAPTER === '1'
+  ),
 
   // Semantic aliases for `!dev`. A gate is a claim about *why* a suite cannot
   // run, so prefer the name that states the reason over the bare mode check.
