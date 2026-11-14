@@ -413,7 +413,7 @@ fn refine_provisional(tt: &TurboTasks<TurboTasksBackend>) {
         let mut ctx = ExecuteContext::new(tt.backend(), tt);
         let (mut owner, mut reader) =
             ctx.task_pair(task(OWNER), task(READER), TaskDataCategory::All);
-        owner.add_keyed_cell_dependent((reverse(), provisional));
+        owner.ensure_cell_dependent(reverse(), Some(provisional));
         let _ = reader.add_cell_dependencies_keyed((target(), provisional));
     }
     assert_eq!(cell_edges(tt), (1, 1));
