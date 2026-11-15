@@ -63,6 +63,23 @@ function clearChunkCache() {
   loadedChunks.clear()
 }
 
+/**
+ * Tells tooling that tracks which chunks are loaded (e.g. to compute server
+ * HMR updates against them) that the factories of a chunk were installed.
+ *
+ * The tooling may return a promise, e.g. to bring the installed factories up
+ * to date. Async loads wait for it before any module they load is evaluated.
+ */
+function reportChunkLoaded(
+  chunkPath: ChunkPath,
+  chunkModules: CompressedModuleFactories
+): void | Promise<void> {
+  // Development chunks carry the version of their factories.
+  const version = (chunkModules as { __turbopack_chunk_version__?: string })
+    .__turbopack_chunk_version__
+  return globalThis.__turbopack_on_chunk_loaded__?.(chunkPath, version)
+}
+
 function loadRuntimeChunkPath(
   sourcePath: ChunkPath,
   chunkPath: ChunkPath
@@ -82,6 +99,8 @@ function loadRuntimeChunkPath(
     const chunkModules: CompressedModuleFactories = require(resolved)
     installCompressedModuleFactories(chunkModules, 0)
     loadedChunks.add(chunkPath)
+    // Runtime chunks load synchronously, so there is nothing to wait for.
+    void reportChunkLoaded(chunkPath, chunkModules)
   } catch (cause) {
     let errorMessage = `Failed to load chunk ${chunkPath}`
 
@@ -159,7 +178,8 @@ function requireChunk(
     // However this is incompatible with hot reloading (since `import` doesn't use the require cache)
     const chunkModules: CompressedModuleFactories = require(resolved)
     installCompressedModuleFactories(chunkModules, 0)
-    return loadedChunk
+    const reported = reportChunkLoaded(chunkPath, chunkModules)
+    return reported === undefined ? loadedChunk : Promise.resolve(reported)
   } catch (cause) {
     const errorMessage = `Failed to load chunk ${chunkPath} from module ${sourceModuleId}`
     const error = new Error(errorMessage, { cause })

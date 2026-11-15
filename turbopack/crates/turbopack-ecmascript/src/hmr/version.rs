@@ -54,24 +54,43 @@ impl EcmascriptChunkVersion {
     }
 }
 
+impl EcmascriptChunkVersion {
+    /// The id of a version with these modules and hashes, see [`Version::id`]. A chunk can
+    /// compute it from the very factories it writes, so it identifies exactly which code the
+    /// chunk installs.
+    pub fn id_of<'a>(
+        chunk_path: &RcStr,
+        minify_type: &MinifyType,
+        modules: impl IntoIterator<Item = (&'a ModuleId, u128)>,
+    ) -> RcStr {
+        let mut hasher = Xxh3Hash64Hasher::new();
+        hasher.write_ref(chunk_path);
+        hasher.write_ref(minify_type);
+        let mut sorted_modules: Vec<_> = modules.into_iter().collect();
+        sorted_modules.sort();
+        hasher.write_value(sorted_modules.len());
+        for (id, hash) in sorted_modules {
+            hasher.write_ref(id);
+            hasher.write_value(hash);
+        }
+        encode_base64(hasher.finish()).into()
+    }
+
+    /// The id of this version, without going through a task, see [`Version::id`].
+    pub fn id_sync(&self) -> RcStr {
+        Self::id_of(
+            &self.chunk_path,
+            &self.minify_type,
+            self.entries_hashes.iter().map(|(id, hash)| (id, *hash)),
+        )
+    }
+}
+
 #[turbo_tasks::value_impl]
 impl Version for EcmascriptChunkVersion {
     #[turbo_tasks::function]
     fn id(&self) -> Vc<RcStr> {
-        let mut hasher = Xxh3Hash64Hasher::new();
-        hasher.write_ref(&self.chunk_path);
-        hasher.write_ref(&self.minify_type);
-        let sorted_hashes = {
-            let mut hashes: Vec<_> = self.entries_hashes.values().copied().collect();
-            hashes.sort();
-            hashes
-        };
-        for hash in sorted_hashes {
-            hasher.write_value(hash);
-        }
-        let hash = hasher.finish();
-        let hash = encode_base64(hash);
-        Vc::cell(hash.into())
+        Vc::cell(self.id_sync())
     }
 }
 
@@ -106,5 +125,36 @@ impl Version for EcmascriptMergedChunkVersion {
         let hash = hasher.finish();
         let hash = encode_base64(hash);
         Ok(Vc::cell(hash.into()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use turbo_rcstr::RcStr;
+    use turbopack_core::chunk::{MinifyType, ModuleId};
+
+    use super::EcmascriptChunkVersion;
+
+    fn id_of(modules: &[(&str, u128)]) -> RcStr {
+        let ids: Vec<_> = modules
+            .iter()
+            .map(|(id, hash)| (ModuleId::String((*id).into()), *hash))
+            .collect();
+        EcmascriptChunkVersion::id_of(
+            &RcStr::from("chunks/a.js"),
+            &MinifyType::NoMinify,
+            ids.iter().map(|(id, hash)| (id, *hash)),
+        )
+    }
+
+    #[test]
+    fn id_does_not_depend_on_module_order() {
+        assert_eq!(id_of(&[("a", 1), ("b", 2)]), id_of(&[("b", 2), ("a", 1)]));
+    }
+
+    #[test]
+    fn id_depends_on_which_module_has_which_code() {
+        assert_ne!(id_of(&[("a", 1), ("b", 2)]), id_of(&[("a", 2), ("b", 1)]));
+        assert_ne!(id_of(&[("a", 1)]), id_of(&[("b", 1)]));
     }
 }

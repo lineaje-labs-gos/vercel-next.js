@@ -812,6 +812,240 @@ export async function GET() {
         }
       )
     })
+
+    it('keeps routes that share a module in sync across revisions', async () => {
+      expect(await fetchJson('/api/revisions/a')).toEqual({
+        result: 'alpha:rev-0',
+      })
+
+      // Route A has loaded the shared module at rev-0. Bump it to rev-1, add
+      // an export, and load it through a new route B first, so B's chunk is
+      // newer than the copy the runtime got through A.
+      await next.patchFile(
+        'app/api/revisions/shared.ts',
+        (content) =>
+          content.replace("'rev-0'", "'rev-1'") +
+          `
+export function beta() {
+  return 'beta:' + revision
+}
+`,
+        async () => {
+          await next.patchFile(
+            'app/api/revisions/b/route.ts',
+            `import { beta } from '../shared'
+
+export async function GET() {
+  return Response.json({ result: beta() })
+}
+`,
+            async () => {
+              await retry(async () => {
+                expect(await fetchJson('/api/revisions/b')).toEqual({
+                  result: 'beta:rev-1',
+                })
+              })
+              expect(await fetchJson('/api/revisions/a')).toEqual({
+                result: 'alpha:rev-1',
+              })
+
+              // Revert the revision, keeping the new export.
+              await next.patchFile('app/api/revisions/shared.ts', (content) =>
+                content.replace("'rev-1'", "'rev-0'")
+              )
+              await retry(async () => {
+                expect(await fetchJson('/api/revisions/b')).toEqual({
+                  result: 'beta:rev-0',
+                })
+              })
+              expect(await fetchJson('/api/revisions/a')).toEqual({
+                result: 'alpha:rev-0',
+              })
+            }
+          )
+        }
+      )
+    })
+
+    it('exposes a new export that uses a new dependency to a newly added route handler', async () => {
+      expect(await fetchJson('/api/new-dependency/alpha')).toEqual({
+        result: 'alpha:x',
+      })
+
+      await next.patchFile(
+        'app/api/new-dependency/extra.ts',
+        `export const extra = 'extra'
+`,
+        async () => {
+          await next.patchFile(
+            'app/api/new-dependency/shared.ts',
+            (content) =>
+              `import { extra } from './extra'
+` +
+              content +
+              `
+export function gamma(input: string) {
+  return 'gamma:' + input + ':' + extra
+}
+`,
+            async () => {
+              await next.patchFile(
+                'app/api/new-dependency/gamma/route.ts',
+                `import { gamma } from '../shared'
+
+export async function GET() {
+  return Response.json({ result: gamma('h') })
+}
+`,
+                async () => {
+                  await retry(async () => {
+                    expect(
+                      await fetchJson('/api/new-dependency/gamma')
+                    ).toEqual({ result: 'gamma:h:extra' })
+                  })
+                  expect(await fetchJson('/api/new-dependency/alpha')).toEqual({
+                    result: 'alpha:x',
+                  })
+                }
+              )
+            }
+          )
+        }
+      )
+    })
+
+    it('exposes a new export of a self-accepted module that uses a new dependency to a newly added route handler', async () => {
+      const initial = await fetchJson('/api/accepted-dependency/alpha')
+      expect(initial.result).toBe('alpha:x')
+
+      await next.patchFile(
+        'app/api/accepted-dependency/extra.ts',
+        `export const extra = 'extra'
+`,
+        async () => {
+          // The shared module accepts itself, so applying the update evaluates
+          // it right away, before the new route's chunks load.
+          await next.patchFile(
+            'app/api/accepted-dependency/shared.ts',
+            (content) =>
+              `import { extra } from './extra'
+` +
+              content +
+              `
+export function gamma(input: string) {
+  return 'gamma:' + input + ':' + extra
+}
+`,
+            async () => {
+              await next.patchFile(
+                'app/api/accepted-dependency/gamma/route.ts',
+                `import { gamma } from '../shared'
+
+export async function GET() {
+  return Response.json({ result: gamma('h') })
+}
+`,
+                async () => {
+                  await retry(async () => {
+                    expect(
+                      await fetchJson('/api/accepted-dependency/gamma')
+                    ).toEqual({ result: 'gamma:h:extra' })
+                  })
+                  // Without a full re-evaluation, the unmodified dependency
+                  // keeps its module instance.
+                  expect(
+                    await fetchJson('/api/accepted-dependency/alpha')
+                  ).toEqual(initial)
+                }
+              )
+            }
+          )
+        }
+      )
+    })
+
+    it('reflects changes to a dynamically-imported module that was not loaded yet', async () => {
+      // The route is compiled and pulled, but its async chunk is never loaded.
+      expect(await fetchJson('/api/async-chunk')).toEqual({
+        result: 'not loaded',
+      })
+
+      await next.patchFile(
+        'app/api/async-chunk/lazy.ts',
+        (content) => content.replace("'lazy-v0'", "'lazy-v1'"),
+        async () => {
+          await retry(async () => {
+            expect(await fetchJson('/api/async-chunk?load')).toEqual({
+              result: 'lazy-v1',
+            })
+          })
+
+          // The async chunk is loaded now. Concurrent imports of the changed
+          // module must both see its current code.
+          await next.patchFile(
+            'app/api/async-chunk/lazy.ts',
+            (content) => content.replace("'lazy-v1'", "'lazy-v2'"),
+            async () => {
+              await retry(async () => {
+                const results = await Promise.all([
+                  fetchJson('/api/async-chunk?load'),
+                  fetchJson('/api/async-chunk?load'),
+                ])
+                expect(results).toEqual([
+                  { result: 'lazy-v2' },
+                  { result: 'lazy-v2' },
+                ])
+              })
+            }
+          )
+        }
+      )
+    })
+
+    it('updates modules after the server runtimes were replaced', async () => {
+      expect(await fetchJson('/api/runtime-reload')).toEqual({
+        result: 'reload-v0',
+      })
+
+      await next.patchFile(
+        'app/api/runtime-reload/shared.ts',
+        (content) => content.replace("'reload-v0'", "'reload-v1'"),
+        async () => {
+          // An update is applied to the current runtime.
+          await retry(async () => {
+            expect(await fetchJson('/api/runtime-reload')).toEqual({
+              result: 'reload-v1',
+            })
+          })
+
+          // Changing an env file replaces the server runtimes, which start
+          // without anything that was applied to the old ones.
+          await next.patchFile(
+            '.env',
+            'SERVER_HMR_RUNTIME_RELOAD=1\n',
+            async () => {
+              await retry(async () => {
+                expect(await fetchJson('/api/runtime-reload')).toEqual({
+                  result: 'reload-v1',
+                })
+              })
+
+              await next.patchFile(
+                'app/api/runtime-reload/shared.ts',
+                (content) => content.replace("'reload-v1'", "'reload-v2'"),
+                async () => {
+                  await retry(async () => {
+                    expect(await fetchJson('/api/runtime-reload')).toEqual({
+                      result: 'reload-v2',
+                    })
+                  })
+                }
+              )
+            }
+          )
+        }
+      )
+    })
   })
 })
 

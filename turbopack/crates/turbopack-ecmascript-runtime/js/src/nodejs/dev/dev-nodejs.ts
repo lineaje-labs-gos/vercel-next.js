@@ -100,3 +100,7 @@ handlers.set(__filename, {
   handler: __turbopack_server_hmr_apply__,
   chunkPrefix,
 })
+
+// This runtime starts without any installed factories, so whatever was
+// recorded as loaded in its directory no longer is.
+globalThis.__turbopack_on_runtime_loaded__?.(chunkPrefix)

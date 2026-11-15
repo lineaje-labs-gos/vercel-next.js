@@ -31,8 +31,6 @@ import type {
   TurbopackResult,
   Project,
   Entrypoints,
-  NodeJsPartialHmrUpdate,
-  ServerHmrVersion,
 } from '../../build/swc/types'
 import { createDefineEnv, getBindingsSync } from '../../build/swc'
 import * as Log from '../../build/output/log'
@@ -52,6 +50,7 @@ import { clearManifestCache, loadManifest } from '../load-manifest.external'
 import { loadClientReferenceManifestForPage } from '../load-components'
 import { setManifestsSingleton } from '../app-render/manifests-singleton'
 import { deleteCache } from './require-cache'
+import { setupServerHmr } from './server-hmr'
 import {
   dropDevValidationWorker,
   mirrorModuleStateToDevValidationWorker,
@@ -199,189 +198,13 @@ const RETAINED_OUTPUT_PATHS = new Set([
 
 declare const __next__clear_chunk_cache__: (() => void) | null | undefined
 
-declare const __turbopack_server_hmr_apply__:
-  | ((update: NodeJsPartialHmrUpdate) => void)
-  | undefined
-
 declare global {
   /**
    * Sync with  `turbopack/crates/turbopack-ecmascript-runtime/js/src/nodejs/runtime/nodejs-globals.d.ts`.
    */
-  var __turbopack_server_hmr_handlers__: Map<string, unknown> | undefined
   var __turbopack_ensure_chunk__:
     | ((chunkPath: string) => void | Promise<void>)
     | undefined
-}
-
-/**
- * Collects the output chunk paths touched by a partial HMR update. Both
- * single-chunk `EcmascriptMergedUpdate`s and `ChunkListUpdate`s (which nest
- * per-chunk deltas inside `merged`) are flattened so the manifest cache can be
- * invalidated for every affected chunk after a successful apply.
- */
-function collectUpdatedChunkPaths(
-  instruction: NodeJsPartialHmrUpdate['instruction']
-): string[] {
-  const paths = new Set<string>()
-  if (instruction.type === 'EcmascriptMergedUpdate') {
-    for (const chunkPath of Object.keys(instruction.chunks ?? {})) {
-      paths.add(chunkPath)
-    }
-  } else if (instruction.type === 'ChunkListUpdate') {
-    for (const chunkPath of Object.keys(instruction.chunks ?? {})) {
-      paths.add(chunkPath)
-    }
-    for (const merged of instruction.merged ?? []) {
-      for (const chunkPath of Object.keys(merged.chunks ?? {})) {
-        paths.add(chunkPath)
-      }
-    }
-  } else {
-    throw new Error(
-      `[Server HMR] unreachable: unknown HMR instruction type ${(instruction as { type: string }).type}`
-    )
-  }
-  return Array.from(paths)
-}
-
-function setupServerHmr(
-  project: Project,
-  {
-    reEvaluateAllModulesExpensive,
-    onApplied,
-  }: {
-    reEvaluateAllModulesExpensive: () => void | Promise<void>
-    onApplied: (chunkPaths: string[]) => void | Promise<void>
-  }
-) {
-  let pending = Promise.resolve()
-  // Each pull snapshots only the requested endpoint's entries. Keep independent
-  // baselines so building one route does not discard another route's version.
-  const versions = new Map<string, ServerHmrVersion>()
-  // The entries pulled since the last full re-evaluation, by version key. Their
-  // modules may be in the shared server runtime's module cache.
-  const pulledEntryPaths = new Map<string, string[]>()
-  let needsReEvaluation = false
-
-  async function recover() {
-    try {
-      await reEvaluateAllModulesExpensive()
-      versions.clear()
-      pulledEntryPaths.clear()
-      needsReEvaluation = false
-    } catch (error) {
-      console.error('[Server HMR] Re-evaluating modules failed:', error)
-    }
-  }
-
-  /**
-   * Pulls the update for one entry since its baseline and applies it to the
-   * server runtime. Returns `false` when the update could not be applied and
-   * all modules need to be re-evaluated.
-   */
-  async function pull(versionKey: string, entryPaths: string[]) {
-    // `issues` is intentionally dropped: this pull scans project-wide chunk
-    // lists, so its issues may belong to an unrelated or removed route, and
-    // endpoint writes already report route-scoped issues.
-    const { value: update } = await project.getServerHmrUpdate(
-      versions.get(versionKey),
-      entryPaths
-    )
-    if (update.version) {
-      versions.set(versionKey, update.version)
-    }
-    switch (update.kind) {
-      case 'none':
-        return true
-      case 'partial': {
-        const handlers = globalThis.__turbopack_server_hmr_handlers__
-        if (!handlers || handlers.size === 0) return true
-
-        const payload: NodeJsPartialHmrUpdate = {
-          type: 'partial',
-          instruction: update.instruction,
-        }
-        if (typeof __turbopack_server_hmr_apply__ === 'function') {
-          try {
-            __turbopack_server_hmr_apply__(payload)
-            mirrorModuleStateToDevValidationWorker({
-              type: 'apply',
-              update: payload,
-            })
-
-            const updatedChunkPaths = collectUpdatedChunkPaths(
-              update.instruction
-            )
-            if (updatedChunkPaths.length > 0) {
-              await onApplied(updatedChunkPaths)
-            }
-            return true
-          } catch {}
-        }
-        return false
-      }
-      case 'restart':
-        return false
-      default:
-        throw new Error(
-          `Unknown server HMR update kind: ${(update as { kind: string }).kind}`
-        )
-    }
-  }
-
-  function apply(entryPaths: string[]): Promise<void> {
-    const applyPromise = pending.then(async () => {
-      if (needsReEvaluation) {
-        await recover()
-        return
-      }
-
-      try {
-        const versionKey = [...entryPaths].sort().join('\0')
-        let applied = true
-        if (!pulledEntryPaths.has(versionKey)) {
-          // The first pull of an entry only records its baseline, and its
-          // chunks install module factories only for modules the runtime does
-          // not know yet. Modules it shares with entries pulled before are
-          // reused from the module cache, so bring those entries up to date
-          // first. Otherwise, the new entry runs a module's pre-edit code,
-          // e.g. without an export that was added since. This evaluates their
-          // changed modules now instead of on their next request.
-          for (const [otherKey, otherEntryPaths] of pulledEntryPaths) {
-            applied = await pull(otherKey, otherEntryPaths)
-            if (!applied) break
-          }
-          pulledEntryPaths.set(versionKey, entryPaths)
-        }
-        if (applied && (await pull(versionKey, entryPaths))) {
-          return
-        }
-      } catch (error) {
-        console.error(
-          '[Server HMR] Update failed, re-evaluating modules:',
-          error
-        )
-      }
-
-      needsReEvaluation = true
-      await recover()
-    })
-    pending = applyPromise
-    return applyPromise
-  }
-
-  function reset(): Promise<void> {
-    const resetState = () => {
-      versions.clear()
-      pulledEntryPaths.clear()
-      needsReEvaluation = false
-    }
-    const resetPromise = pending.then(resetState, resetState)
-    pending = resetPromise
-    return resetPromise
-  }
-
-  return { apply, reset }
 }
 
 function getSourceMapFromTurbopack(
@@ -2534,6 +2357,8 @@ export async function createHotReloaderTurbopack(
   let serverHmr: ReturnType<typeof setupServerHmr> | undefined
   if (serverFastRefresh) {
     serverHmr = setupServerHmr(project, {
+      mirrorApply: (update) =>
+        mirrorModuleStateToDevValidationWorker({ type: 'apply', update }),
       reEvaluateAllModulesExpensive: async () => {
         // Evict every server-HMR-managed chunk from `require.cache`.
         // Trailing `sep` so e.g. `server/chunks-other/...` doesn't match.
@@ -2586,6 +2411,8 @@ export async function createHotReloaderTurbopack(
         })
       },
     })
+    const { dispose } = serverHmr
+    opts.onDevServerCleanup?.(async () => dispose())
   }
 
   return hotReloader

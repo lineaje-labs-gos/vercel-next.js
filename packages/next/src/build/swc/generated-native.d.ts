@@ -9,7 +9,8 @@ import type {
 
 export type TurboTasks = { readonly __tag: unique symbol }
 export type ExternalEndpoint = { readonly __tag: unique symbol }
-export type ServerHmrVersion = { readonly __tag: unique symbol }
+export type ServerHmrChunkVersion = { readonly __tag: unique symbol }
+export type ServerHmrApplied = { readonly __tag: unique symbol }
 export type NextTurboTasks = { readonly __tag: unique symbol }
 export type RefCell<_T = unknown> = { readonly __tag: unique symbol }
 export type FlushGuard = { readonly __tag: unique symbol }
@@ -494,11 +495,41 @@ export interface NapiRoute {
   dataEndpoint?: ExternalObject<ExternalEndpoint>
 }
 
+export interface NapiServerHmrChunkVersion {
+  /** The chunk's path, relative to the output root (the runtime's chunk path). */
+  path: RcStr
+  /** The version's id, as the chunk file reports it when it loads. */
+  id: RcStr
+  version: ExternalObject<ServerHmrChunkVersion>
+}
+
+/** What the server runtimes have loaded, as recorded by the caller. */
+export interface NapiServerHmrLoadedState {
+  /** The version of every chunk a runtime loaded. */
+  chunks: ExternalObject<ServerHmrChunkVersion>[]
+  /** The paths of chunks a runtime installed at a version that isn't known. */
+  uncertainChunks: Array<RcStr>
+  /** The module hashes installed by applied updates. */
+  applied?: ExternalObject<ServerHmrApplied>
+  /**
+   * Output directories whose runtimes were replaced since `applied` was returned. Nothing
+   * that was applied to the replaced runtimes is installed in the new ones.
+   */
+  replacedRuntimeDirs: Array<RcStr>
+  /** The chunk paths the requested route reported in its previous pull, if any. */
+  previousRouteChunks?: Array<RcStr>
+}
+
 export interface NapiServerHmrUpdate {
-  kind: 'none' | 'partial' | 'restart'
+  kind: 'none' | 'partial'
   /** `unknown` forces the TypeScript boundary to narrow the payload. */
   instruction?: unknown
-  version?: ExternalObject<ServerHmrVersion>
+  /** The current versions of the requested route's chunks. */
+  chunkVersions: Array<NapiServerHmrChunkVersion>
+  /** The module hashes installed by applied updates, once this update is applied. */
+  applied: ExternalObject<ServerHmrApplied>
+  /** The chunks whose factories this update installs, to record as loaded once it is applied. */
+  installedChunks: Array<RcStr>
 }
 
 export interface NapiSource {
@@ -654,9 +685,13 @@ export declare function projectGetAllCompilationIssues(project: {
   __napiType: 'Project'
 }): Promise<TurbopackResult<undefined>>
 
+/**
+ * Computes the server HMR update for the route of `entry_paths` against what the server
+ * runtimes have loaded.
+ */
 export declare function projectGetServerHmrUpdate(
   project: { __napiType: 'Project' },
-  from: ExternalObject<ServerHmrVersion> | undefined | null,
+  loaded: NapiServerHmrLoadedState,
   entryPaths: Array<RcStr>
 ): Promise<TurbopackResult<NapiServerHmrUpdate>>
 

@@ -14,13 +14,17 @@ use flate2::write::GzEncoder;
 use futures_util::TryFutureExt;
 use napi::{
     Env, Status, Unknown,
-    bindgen_prelude::{External, FunctionRef, PromiseRaw, within_runtime_if_available},
+    bindgen_prelude::{
+        External, ExternalRef, FunctionRef, PromiseRaw, within_runtime_if_available,
+    },
     threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode},
 };
 use napi_derive::napi;
 use next_api::{
     aggregate_hmr::{
-        ServerHmrChunkListVersion, ServerHmrChunkLists, ServerHmrUpdate, compute_server_hmr_update,
+        EcmascriptChunkVersion, ServerHmrAppliedModules, ServerHmrChunkLists, ServerHmrLoadedState,
+        ServerHmrLoadedUpdate, ServerHmrLoadedUpdateInput, ServerHmrRouteChunk,
+        server_hmr_loaded_update_operation, server_hmr_route_chunks, trace_server_hmr_diffs,
     },
     entrypoints::Entrypoints,
     next_server_nft::next_server_nft_assets,
@@ -2002,35 +2006,22 @@ async fn hmr_update_with_issues_operation(
 #[turbo_tasks::value(serialization = "skip")]
 struct ServerHmrSnapshotWithEffects {
     chunk_lists: ReadRef<ServerHmrChunkLists>,
-    version: ReadRef<ServerHmrChunkListVersion>,
+    /// Read in the same operation whose effects write them, so their versions belong to the
+    /// written files.
+    route_chunks: Arc<Vec<ServerHmrRouteChunk>>,
     issues: Arc<Vec<ReadRef<PlainIssue>>>,
     effects: Arc<Effects>,
 }
 
-#[turbo_tasks::value(serialization = "skip")]
-struct ServerHmrSnapshot {
-    chunk_lists: ReadRef<ServerHmrChunkLists>,
-    version: ReadRef<ServerHmrChunkListVersion>,
-}
-
 #[turbo_tasks::function(operation, root)]
-async fn project_server_hmr_snapshot_operation(
+fn project_server_hmr_snapshot_operation(
     project: ResolvedVc<Project>,
     entry_paths: Vec<RcStr>,
-) -> Result<Vc<ServerHmrSnapshot>> {
-    let chunk_lists = project.server_hmr_chunks_for_entries(entry_paths).await?;
-    let version = ServerHmrChunkListVersion::from_chunk_lists(chunk_lists.as_slice())
-        .await?
-        .cell()
-        .await?;
-    Ok(ServerHmrSnapshot {
-        chunk_lists,
-        version,
-    }
-    .cell())
+) -> Vc<ServerHmrChunkLists> {
+    project.server_hmr_chunks_for_entries(entry_paths)
 }
 
-/// Snapshot only; diffing here would keep old baselines active.
+/// Snapshot only; diffing here would keep the loaded state of older pulls active.
 #[tracing::instrument(level = "info", name = "server hmr snapshot", skip_all)]
 #[turbo_tasks::function(operation, root)]
 async fn server_hmr_snapshot_with_effects_operation(
@@ -2047,98 +2038,180 @@ async fn server_hmr_snapshot_with_effects_operation(
     let filter = project.issue_filter().await?;
     let issues = get_issues(snapshot_op, &filter).await?;
     let effects = Arc::new(take_effects(snapshot_op).await?);
+    let route_chunks = Arc::new(server_hmr_route_chunks(snapshot.as_slice()).await?);
     Ok(ServerHmrSnapshotWithEffects {
-        chunk_lists: snapshot.chunk_lists.clone(),
-        version: snapshot.version.clone(),
+        chunk_lists: snapshot,
+        route_chunks,
         issues,
         effects,
     }
     .cell())
 }
 
-pub struct ServerHmrVersion(ReadRef<ServerHmrChunkListVersion>);
+/// The version of a chunk, as reported by a server HMR pull.
+pub struct ServerHmrChunkVersion(ReadRef<EcmascriptChunkVersion>);
+
+/// Module hashes installed by applied server HMR updates.
+pub struct ServerHmrApplied(ServerHmrAppliedModules);
+
+#[napi(object, object_from_js = false)]
+pub struct NapiServerHmrChunkVersion {
+    /// The chunk's path, relative to the output root (the runtime's chunk path).
+    pub path: RcStr,
+    /// The version's id, as the chunk file reports it when it loads.
+    pub id: RcStr,
+    pub version: External<ServerHmrChunkVersion>,
+}
 
 #[napi(object, object_from_js = false)]
 pub struct NapiServerHmrUpdate {
-    #[napi(ts_type = "\"none\" | \"partial\" | \"restart\"")]
+    #[napi(ts_type = "\"none\" | \"partial\"")]
     pub kind: String,
     /// `unknown` forces the TypeScript boundary to narrow the payload.
     #[napi(ts_type = "unknown")]
     pub instruction: Option<serde_json::Value>,
-    pub version: Option<External<ServerHmrVersion>>,
+    /// The current versions of the requested route's chunks.
+    pub chunk_versions: Vec<NapiServerHmrChunkVersion>,
+    /// The module hashes installed by applied updates, once this update is applied.
+    pub applied: External<ServerHmrApplied>,
+    /// The chunks whose factories this update installs, to record as loaded once it is applied.
+    pub installed_chunks: Vec<RcStr>,
 }
 
 impl NapiServerHmrUpdate {
     /// Flattens the union for napi; `swc/types.ts` restores it.
-    fn new(update: &ServerHmrUpdate) -> Result<Self> {
-        let (kind, to, instruction) = match update {
-            ServerHmrUpdate::NoRuntimeUpdate { to } => ("none", to.as_ref(), None),
-            ServerHmrUpdate::FullReevaluation { to } => ("restart", Some(to), None),
-            ServerHmrUpdate::Partial { to, instruction } => {
-                ("partial", Some(to), Some(instruction))
-            }
-        };
-
+    fn new(update: &ServerHmrLoadedUpdate) -> Result<Self> {
         Ok(Self {
-            kind: kind.into(),
-            instruction: instruction.map(serde_json::to_value).transpose()?,
-            version: to.map(|to| External::new(ServerHmrVersion(to.clone()))),
+            kind: if update.instruction.is_some() {
+                "partial"
+            } else {
+                "none"
+            }
+            .into(),
+            instruction: update
+                .instruction
+                .as_ref()
+                .map(serde_json::to_value)
+                .transpose()?,
+            chunk_versions: update
+                .chunk_versions
+                .iter()
+                .zip(&update.chunk_version_ids)
+                .map(|(version, id)| NapiServerHmrChunkVersion {
+                    path: version.chunk_path.clone(),
+                    id: id.clone(),
+                    version: External::new(ServerHmrChunkVersion(version.clone())),
+                })
+                .collect(),
+            applied: External::new(ServerHmrApplied(update.applied.clone())),
+            installed_chunks: update.installed_chunks.clone(),
         })
     }
 }
 
+/// What the server runtimes have loaded, as recorded by the caller.
+#[napi(object, object_to_js = false)]
+pub struct NapiServerHmrLoadedState {
+    /// The version of every chunk a runtime loaded.
+    #[napi(ts_type = "ExternalObject<ServerHmrChunkVersion>[]")]
+    pub chunks: Vec<ExternalRef<ServerHmrChunkVersion>>,
+    /// The paths of chunks a runtime installed at a version that isn't known.
+    pub uncertain_chunks: Vec<RcStr>,
+    /// The module hashes installed by applied updates.
+    #[napi(ts_type = "ExternalObject<ServerHmrApplied>")]
+    pub applied: Option<ExternalRef<ServerHmrApplied>>,
+    /// Output directories whose runtimes were replaced since `applied` was returned. Nothing
+    /// that was applied to the replaced runtimes is installed in the new ones.
+    pub replaced_runtime_dirs: Vec<RcStr>,
+    /// The chunk paths the requested route reported in its previous pull, if any.
+    pub previous_route_chunks: Option<Vec<RcStr>>,
+}
+
+/// Computes the server HMR update for the route of `entry_paths` against what the server
+/// runtimes have loaded.
 #[tracing::instrument(level = "info", name = "get server HMR update", skip_all)]
-#[napi]
-pub async fn project_get_server_hmr_update(
+#[napi(ts_return_type = "Promise<TurbopackResult<NapiServerHmrUpdate>>")]
+pub fn project_get_server_hmr_update<'env>(
+    env: &'env Env,
     #[napi(ts_arg_type = "{ __napiType: \"Project\" }")] project: &External<ProjectInstance>,
-    from: Option<&External<ServerHmrVersion>>,
+    loaded: NapiServerHmrLoadedState,
     entry_paths: Vec<RcStr>,
-) -> napi::Result<TurbopackResult<NapiServerHmrUpdate>> {
+) -> napi::Result<PromiseRaw<'env, TurbopackResult<NapiServerHmrUpdate>>> {
     let container = project.container;
-    let turbo_tasks = project.turbopack_ctx.turbo_tasks();
-    let from = from.map(|from| from.0.clone());
+    let turbopack_ctx = project.turbopack_ctx.clone();
+    // `ExternalRef`s must not leave the JS thread, so copy out what they hold.
+    let NapiServerHmrLoadedState {
+        chunks,
+        uncertain_chunks,
+        applied,
+        replaced_runtime_dirs,
+        previous_route_chunks,
+    } = loaded;
+    let mut applied_modules = applied
+        .as_ref()
+        .map(|applied| applied.0.clone())
+        .unwrap_or_default();
+    applied_modules.remove_dirs(replaced_runtime_dirs.iter().map(|dir| &**dir));
+    let loaded = ServerHmrLoadedState {
+        chunks: chunks.iter().map(|version| version.0.clone()).collect(),
+        uncertain_chunks: uncertain_chunks.into_iter().collect(),
+        applied: applied_modules,
+        previous_route_chunks: previous_route_chunks.map(|chunks| chunks.into_iter().collect()),
+    };
+    drop((chunks, applied));
 
-    let (project, read) = turbo_tasks
-        .run(async move {
-            // HACK(bgw): Remove this unmark call
-            unmark_top_level_task_may_leak_eventually_consistent_state();
-            let project = container.project().to_resolved().await?;
-            // HACK(bgw): Remove this mark call
-            mark_top_level_task();
-            let snapshot_op = server_hmr_snapshot_with_effects_operation(project, entry_paths);
-            let read =
-                read_strongly_consistent_and_apply_effects(snapshot_op, |v| &v.effects).await?;
-            Ok((project, read))
+    env.spawn_future(async move {
+        let turbo_tasks = turbopack_ctx.turbo_tasks();
+        let (project, read) = turbo_tasks
+            .run(async move {
+                // HACK(bgw): Remove this unmark call
+                unmark_top_level_task_may_leak_eventually_consistent_state();
+                let project = container.project().to_resolved().await?;
+                // HACK(bgw): Remove this mark call
+                mark_top_level_task();
+                let snapshot_op = server_hmr_snapshot_with_effects_operation(project, entry_paths);
+                // The chunks must be written before their versions are reported: a recorded
+                // version must never be newer than the file that loaded.
+                let read =
+                    read_strongly_consistent_and_apply_effects(snapshot_op, |v| &v.effects).await?;
+                Ok((project, read))
+            })
+            .await
+            .map_err(|e| napi::Error::from_reason(PrettyPrintError(&e.into()).to_string()))?;
+
+        // Diffing must not remain active after the pull completes.
+        let (update, issues) = turbo_tasks
+            .run(async move {
+                // The snapshot's chunk-list `Vc`s are only valid while the project is held.
+                let _project_keep_alive = project;
+                let ServerHmrSnapshotWithEffects {
+                    chunk_lists,
+                    route_chunks,
+                    issues,
+                    ..
+                } = &*read;
+                trace_server_hmr_diffs(chunk_lists.as_slice());
+                let update = server_hmr_loaded_update_operation(TransientInstance::new(
+                    ServerHmrLoadedUpdateInput {
+                        chunks: route_chunks.iter().cloned().collect(),
+                        loaded,
+                    },
+                ))
+                .read_strongly_consistent()
+                .await?;
+                Ok::<_, anyhow::Error>((update, issues.clone()))
+            })
+            .await
+            .map_err(|e| napi::Error::from_reason(PrettyPrintError(&e.into()).to_string()))?;
+
+        Ok(TurbopackResult {
+            result: NapiServerHmrUpdate::new(&update)
+                .map_err(|error| napi::Error::from_reason(PrettyPrintError(&error).to_string()))?,
+            issues: issues
+                .iter()
+                .map(|issue| NapiIssue::from(&**issue))
+                .collect(),
         })
-        .await
-        .map_err(|e| napi::Error::from_reason(PrettyPrintError(&e.into()).to_string()))?;
-
-    // Diffing must not remain active after the pull completes.
-    let (update, issues) = turbo_tasks
-        .run(async move {
-            // The snapshot's chunk-list `Vc`s are only valid while the project is held.
-            let _project_keep_alive = project;
-            let ServerHmrSnapshotWithEffects {
-                chunk_lists,
-                version,
-                issues,
-                ..
-            } = &*read;
-            let update =
-                compute_server_hmr_update(chunk_lists.as_slice(), from.as_deref(), version.clone())
-                    .await?;
-            Ok::<_, anyhow::Error>((update, issues.clone()))
-        })
-        .await
-        .map_err(|e| napi::Error::from_reason(PrettyPrintError(&e.into()).to_string()))?;
-
-    Ok(TurbopackResult {
-        result: NapiServerHmrUpdate::new(&update)
-            .map_err(|error| napi::Error::from_reason(PrettyPrintError(&error).to_string()))?,
-        issues: issues
-            .iter()
-            .map(|issue| NapiIssue::from(&**issue))
-            .collect(),
     })
 }
 

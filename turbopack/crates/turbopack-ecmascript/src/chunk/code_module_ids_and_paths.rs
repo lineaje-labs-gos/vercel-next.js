@@ -5,6 +5,7 @@ use turbo_rcstr::RcStr;
 use turbo_tasks::{
     NonLocalValue, ReadRef, TryJoinIterExt, ValueToString, Vc, debug::ValueDebugFormat,
 };
+use turbo_tasks_hash::hash_xxh3_hash128;
 use turbopack_core::{
     chunk::{ChunkItem, ChunkItemExt, MangleType, MinifyType, ModuleId},
     code_builder::Code,
@@ -28,6 +29,8 @@ async fn code_module_id_and_path(
         .code(item.async_info.map(|info| *info))
         .await?;
     let code = factory.code.to_code().await?;
+    // The same hash as the chunk version's, taken from the code this factory is written from.
+    let hash = hash_xxh3_hash128(code.source_code());
     // `MinifyType::NoMinify` here means the chunk will be minified as a whole later (or not at
     // all); only the per-item mode asks for the factory to be minified now. A strict factory keeps
     // its `"use strict"` directive either way; the chunk drops it where it places the factory in a
@@ -46,6 +49,7 @@ async fn code_module_id_and_path(
     Ok(CodeModuleIdAndPath {
         id: item.chunk_item.id().await?,
         code,
+        hash,
         path: item.chunk_item.asset_ident().to_string().owned().await?,
         strict: factory.strict,
     })
@@ -55,6 +59,9 @@ async fn code_module_id_and_path(
 pub struct CodeModuleIdAndPath {
     pub id: ModuleId,
     pub code: ReadRef<Code>,
+    /// The hash of the item's unminified code, as in
+    /// [`EcmascriptChunkVersion`](crate::hmr::version::EcmascriptChunkVersion).
+    pub hash: u128,
     pub path: RcStr,
     pub strict: bool,
 }

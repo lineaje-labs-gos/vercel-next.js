@@ -52,6 +52,13 @@ pub struct EcmascriptBuildNodeChunkListContent {
     pub(super) chunks_contents: FxIndexMap<String, ResolvedVc<Box<dyn VersionedContent>>>,
 }
 
+impl EcmascriptBuildNodeChunkListContent {
+    /// The tracked chunks, keyed by their `output_root`-relative path.
+    pub fn chunks_contents(&self) -> &FxIndexMap<String, ResolvedVc<Box<dyn VersionedContent>>> {
+        &self.chunks_contents
+    }
+}
+
 #[turbo_tasks::value_impl]
 impl EcmascriptBuildNodeChunkListContent {
     #[turbo_tasks::function]

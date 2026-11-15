@@ -1,5 +1,7 @@
+use std::io::Write;
+
 use anyhow::Result;
-use turbo_tasks::{ResolvedVc, Vc};
+use turbo_tasks::{ResolvedVc, Vc, turbobail};
 use turbo_tasks_fs::{File, FileContent};
 use turbopack_core::{
     asset::AssetContent,
@@ -18,7 +20,9 @@ use turbopack_ecmascript::{
         EcmascriptHmrChunkContent, merger::EcmascriptChunkContentMerger,
         version::EcmascriptChunkVersion,
     },
+    utils::StringifyJs,
 };
+use turbopack_ecmascript_runtime::RuntimeType;
 
 use super::chunk::EcmascriptBuildNodeChunk;
 use crate::NodeJsChunkingContext;
@@ -94,6 +98,29 @@ impl EcmascriptNodeChunkContent {
             supports_arrow_functions,
         )?;
         code += "];";
+        // In development, the chunk reports the exact version of its factories when it loads, so
+        // that updates can be computed against what a runtime actually installed. The version is
+        // computed from the very factories written here.
+        if matches!(
+            *self.chunking_context.runtime_type().await?,
+            RuntimeType::Development
+        ) {
+            let output_root = self.chunking_context.output_root().owned().await?;
+            let chunk_path = self.chunk.path().owned().await?;
+            let Some(chunk_path) = output_root.get_path_to(&chunk_path) else {
+                turbobail!("chunk path {chunk_path} is not in output root {output_root}");
+            };
+            let version_id = EcmascriptChunkVersion::id_of(
+                &chunk_path.into(),
+                &*self.chunking_context.minify_type().await?,
+                chunk_items.iter().map(|item| (&item.id, item.hash)),
+            );
+            write!(
+                code,
+                "module.exports.__turbopack_chunk_version__={};",
+                StringifyJs(&version_id)
+            )?;
+        }
         if let Some((_, suffix)) = strict_chunk_wrapper {
             code += suffix;
         }

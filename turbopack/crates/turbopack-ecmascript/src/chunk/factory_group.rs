@@ -182,6 +182,7 @@ mod tests {
         CodeModuleIdAndPath {
             id: ModuleId::Number(id),
             code: ReadRef::new_owned(code.build()),
+            hash: 0,
             path: Default::default(),
             strict,
         }

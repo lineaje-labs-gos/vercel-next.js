@@ -34,7 +34,7 @@ import type {
   RawEntrypoints,
   Route,
   ServerHmrUpdate,
-  ServerHmrVersion,
+  ServerHmrLoadedState,
   TurboEngineOptions,
   TurbopackResult,
   TurbopackStackFrame,
@@ -775,13 +775,13 @@ function bindingToApi(
     }
 
     async getServerHmrUpdate(
-      from: ServerHmrVersion | undefined,
+      loaded: ServerHmrLoadedState,
       entryPaths: string[]
     ): Promise<TurbopackResult<ServerHmrUpdate>> {
       // napi cannot express the field correlation.
       return binding.projectGetServerHmrUpdate(
         this._nativeProject,
-        from,
+        loaded,
         entryPaths
       ) as Promise<TurbopackResult<ServerHmrUpdate>>
     }
