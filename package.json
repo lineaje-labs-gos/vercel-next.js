@@ -1,6 +1,6 @@
 {
   "name": "eslint-config-next",
-  "version": "13.5.11-lineaje-01",
+  "version": "13.5.11-lineaje-02",
   "description": "ESLint configuration used by Next.js.",
   "main": "index.js",
   "license": "MIT",
