@@ -2158,9 +2158,11 @@ export function createAppPageEntrypoint({
 
         const didPostpone = typeof cacheEntry.value.postponed === 'string'
 
-        // A static shell with postponed parts doesn't include the Turbopack
-        // bootstrap: the resume emits it with the request's CSP nonce. When
-        // such a shell is served without a resume, it has to be added.
+        // A static shell with postponed parts doesn't include an inline
+        // Turbopack bootstrap: the resume emits it with the request's CSP
+        // nonce. When such a shell is served without a resume, it has to be
+        // added. Not needed (no stream is returned) when the runtime's
+        // `<script>` tag in the shell carries the bootstrap as an attribute.
         const pushTurbopackBootstrapScript = (result: RenderResult) => {
           if (!didPostpone) return
           const bootstrapScript = createTurbopackBootstrapScriptStreamForPage(

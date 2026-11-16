@@ -9,8 +9,49 @@ import {
 import { streamFromString } from '../stream-utils/node-web-streams-helper'
 
 /**
+ * Whether the Turbopack runtime's `<script>` tag can carry the chunk-group
+ * bootstrap for a page with these root main files. The shared runtime chunk is
+ * always the last root main file. Unless it's the only one, it's loaded with
+ * `ReactDOM.preinit`, which can set data attributes on the tag (the first file
+ * is React's bootstrap script, which can't).
+ */
+export function rootMainFilesCarryTurbopackBootstrap(
+  rootMainFiles: readonly string[]
+): boolean {
+  return rootMainFiles.length > 1
+}
+
+/**
+ * The Turbopack chunk-group bootstrap params for `pages`, as the JSON array the
+ * Turbopack runtime reads from the `data-turbopack-bootstrap` attribute of its
+ * own `<script>` tag (see `getRequiredScripts`). Returns undefined when the
+ * build doesn't use the shared runtime, or has no params for `pages`.
+ *
+ * Unlike the inline bootstrap script, the attribute needs no CSP nonce and
+ * carries only build-time data, so it can be part of a Cache Components static
+ * shell.
+ */
+export function getTurbopackBootstrapData(
+  buildManifest: BuildManifest,
+  pages: readonly string[]
+): string | undefined {
+  if (
+    !buildManifest.pagesChunkGroupBootstrapParams ||
+    !buildManifest.chunkLoadingGlobal
+  ) {
+    return undefined
+  }
+  const paramsByPage = buildManifest.pagesChunkGroupBootstrapParams
+  const params = pages.map((page) => paramsByPage[page]).filter(Boolean)
+  return params.length > 0 ? JSON.stringify(params) : undefined
+}
+
+/**
  * Renders the Turbopack chunk-group bootstrap (see
- * `getTurbopackChunkGroupBootstrap`) as an inline `<script>` tag.
+ * `getTurbopackChunkGroupBootstrap`) as an inline `<script>` tag. This is only
+ * the fallback for when the bootstrap can't be carried by the
+ * `data-turbopack-bootstrap` attribute of the runtime's `<script>` tag (see
+ * `getRequiredScripts`).
  *
  * Under Cache Components, a static shell is prerendered without a request, so
  * it can never carry the per-request CSP nonce. A static shell that is resumed
@@ -47,7 +88,8 @@ export function createTurbopackBootstrapScriptStream(
 /**
  * The Turbopack bootstrap script for `page`, for serving a Cache Components
  * static shell on its own, without the resume that would otherwise emit it.
- * Returns undefined when the build doesn't inline a bootstrap for the page.
+ * Returns undefined when the build doesn't inline a bootstrap for the page,
+ * including when the runtime's `<script>` tag in the shell carries it.
  */
 export function createTurbopackBootstrapScriptStreamForPage(
   buildManifest: BuildManifest,
@@ -56,7 +98,10 @@ export function createTurbopackBootstrapScriptStreamForPage(
 ): ReadableStream<Uint8Array> | undefined {
   if (
     !buildManifest.pagesChunkGroupBootstrapParams ||
-    !buildManifest.chunkLoadingGlobal
+    !buildManifest.chunkLoadingGlobal ||
+    rootMainFilesCarryTurbopackBootstrap(
+      buildManifest.rootMainFilesTree?.[page] || buildManifest.rootMainFiles
+    )
   ) {
     return undefined
   }

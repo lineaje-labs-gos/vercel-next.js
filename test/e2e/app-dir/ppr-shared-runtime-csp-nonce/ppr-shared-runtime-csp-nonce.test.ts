@@ -3,9 +3,18 @@ import { retry } from 'next-test-utils'
 import { splitResponseWithPPRSentinel } from 'e2e-utils/ppr'
 import cheerio from 'cheerio'
 
-// The inlined chunk-group bootstrap that `experimental.turbopackSharedRuntime`
-// emits: `(globalThis["TURBOPACK"] || ...).push({"otherChunks":...})`.
-const BOOTSTRAP_MARKER = '"otherChunks"'
+// With `experimental.turbopackSharedRuntime`, the Turbopack chunk-group
+// bootstrap is carried by the shared runtime's `<script>` tag, as JSON in this
+// attribute. It used to be an inline script,
+// `(globalThis["TURBOPACK"] || ...).push({"otherChunks":...})`, which needs a
+// CSP nonce and therefore couldn't be part of a static shell.
+const BOOTSTRAP_ATTRIBUTE = 'data-turbopack-bootstrap'
+const INLINE_BOOTSTRAP_MARKER = '"otherChunks"'
+
+type BootstrapParams = {
+  otherChunks: Array<string | { path: string }>
+  runtimeModuleIds: unknown[]
+}
 
 function getNonce(csp: string | null): string {
   const match = csp?.match(/'nonce-([^']+)'/)
@@ -13,25 +22,30 @@ function getNonce(csp: string | null): string {
   return match[1]
 }
 
-function getBootstrapScripts(html: string) {
+function getInlineBootstrapScripts(html: string) {
   const $ = cheerio.load(html)
   return $('script:not([src])')
     .toArray()
-    .filter((element) => $(element).html()!.includes(BOOTSTRAP_MARKER))
-    .map((element) => ({ nonce: $(element).attr('nonce') }))
+    .filter((element) => $(element).html()!.includes(INLINE_BOOTSTRAP_MARKER))
 }
 
-// The params of the (single) bootstrap `globalThis[...].push(<params>)`.
-function getBootstrapParams(html: string): {
-  otherChunks: Array<string | { path: string }>
-} {
+function getBootstrapAttributeScripts(html: string) {
   const $ = cheerio.load(html)
-  const script = $('script:not([src])')
+  return $(`script[${BOOTSTRAP_ATTRIBUTE}]`)
     .toArray()
-    .map((element) => $(element).html()!)
-    .find((content) => content.includes(BOOTSTRAP_MARKER))!
-  const start = script.indexOf('.push(') + '.push('.length
-  return JSON.parse(script.slice(start, script.lastIndexOf(')')))
+    .map((element) => ({
+      src: $(element).attr('src')!,
+      params: JSON.parse(
+        $(element).attr(BOOTSTRAP_ATTRIBUTE)!
+      ) as BootstrapParams[],
+    }))
+}
+
+function getChunkScriptPaths(params: BootstrapParams[]) {
+  return params
+    .flatMap((p) => p.otherChunks)
+    .map((chunk) => (typeof chunk === 'string' ? chunk : chunk.path))
+    .filter((path) => path.endsWith('.js'))
 }
 
 async function expectNoUnexpectedCspViolations(browser: Playwright) {
@@ -54,62 +68,61 @@ async function expectNoUnexpectedCspViolations(browser: Playwright) {
   expect(inlineViolations.length).toBeLessThanOrEqual(1)
 }
 
-// The shared runtime (and thus the inlined bootstrap) only exists in Turbopack
-// production builds.
+// The shared runtime (and thus the chunk-group bootstrap) only exists in
+// Turbopack production builds.
 // @force-gate !dev && turbopack
 describe('ppr-shared-runtime-csp-nonce', () => {
   const { next } = nextTestSetup({
     files: __dirname,
   })
 
-  it('should emit the bootstrap with the request nonce in the resumed dynamic part, not in the static shell', async () => {
-    let csp: string | null = null
+  it('should carry the bootstrap on the shared runtime script in the static shell', async () => {
     const [staticPart, dynamicPart] = await splitResponseWithPPRSentinel(
-      async () => {
-        const res = await next.fetch('/')
-        csp = res.headers.get('content-security-policy')
-        return res.body
-      }
+      async () => (await next.fetch('/')).body
     )
-    const nonce = getNonce(csp)
-    // The fixture allows the Vercel toolbar that preview deployments inject.
-    expect(csp).toContain(
-      `script-src 'self' 'nonce-${nonce}' https://vercel.live;`
-    )
-
     expect(dynamicPart).not.toBe('')
-    expect(getBootstrapScripts(staticPart)).toEqual([])
-    expect(getBootstrapScripts(dynamicPart)).toEqual([{ nonce }])
+
+    const scripts = getBootstrapAttributeScripts(staticPart)
+    expect(scripts).toHaveLength(1)
+    const [{ src, params }] = scripts
+    expect(params).toEqual([
+      expect.objectContaining({
+        otherChunks: expect.any(Array),
+        runtimeModuleIds: expect.any(Array),
+      }),
+    ])
+    expect(getChunkScriptPaths(params).length).toBeGreaterThan(0)
+
+    // The attribute is on the shared runtime chunk, the script that reads it.
+    const runtime = await (await next.fetch(src)).text()
+    expect(runtime).toContain(BOOTSTRAP_ATTRIBUTE)
+
+    expect(getBootstrapAttributeScripts(dynamicPart)).toEqual([])
   })
 
-  it('should emit the bootstrap with the nonce of a report-only CSP in the resumed dynamic part', async () => {
-    let csp: string | null = null
-    const [staticPart, dynamicPart] = await splitResponseWithPPRSentinel(
-      async () => {
-        const res = await next.fetch('/?csp=report-only')
-        expect(res.headers.get('content-security-policy')).toBeNull()
-        csp = res.headers.get('content-security-policy-report-only')
-        return res.body
-      }
-    )
-    const nonce = getNonce(csp)
+  it.each(['nonce', 'report-only', 'none'])(
+    'should not emit an inline bootstrap script (csp: %s)',
+    async (mode) => {
+      const [staticPart, dynamicPart] = await splitResponseWithPPRSentinel(
+        async () => {
+          const res = await next.fetch(`/?csp=${mode}`)
+          if (mode === 'nonce') {
+            const nonce = getNonce(res.headers.get('content-security-policy'))
+            // The fixture allows the Vercel toolbar that preview deployments
+            // inject.
+            expect(res.headers.get('content-security-policy')).toContain(
+              `script-src 'self' 'nonce-${nonce}' https://vercel.live;`
+            )
+          }
+          return res.body
+        }
+      )
 
-    expect(getBootstrapScripts(staticPart)).toEqual([])
-    expect(getBootstrapScripts(dynamicPart)).toEqual([{ nonce }])
-  })
-
-  it('should emit the bootstrap without a nonce in the resumed dynamic part when there is no CSP', async () => {
-    const [staticPart, dynamicPart] = await splitResponseWithPPRSentinel(
-      async () => {
-        const res = await next.fetch('/?csp=none')
-        expect(res.headers.get('content-security-policy')).toBeNull()
-        return res.body
-      }
-    )
-
-    expect(getBootstrapScripts(staticPart)).toEqual([])
-    expect(getBootstrapScripts(dynamicPart)).toEqual([{ nonce: undefined }])
-  })
+      expect(getInlineBootstrapScripts(staticPart)).toEqual([])
+      expect(getInlineBootstrapScripts(dynamicPart)).toEqual([])
+      expect(getBootstrapAttributeScripts(staticPart)).toHaveLength(1)
+    }
+  )
 
   it('should hydrate under a nonce-based CSP without CSP violations for the bootstrap', async () => {
     const browser = await next.browser('/')
@@ -124,14 +137,13 @@ describe('ppr-shared-runtime-csp-nonce', () => {
     await expectNoUnexpectedCspViolations(browser)
   })
 
-  it('should hydrate when the resumed bootstrap runs after the shared runtime has loaded', async () => {
-    // The resume usually reaches the browser after the static shell, e.g. when
-    // a CDN serves the shell and the resume comes from a function, by which
-    // point the (cached) shared runtime and the entry's chunks may already
-    // have run. Make that ordering deterministic: load every chunk of the
-    // entry with blocking scripts in the head, so they all run before the
-    // parser reaches the bootstrap in the resumed part. The runtime then
-    // instantiates the entry from within the inline bootstrap script.
+  // The runtime reads the bootstrap from its own script tag when it executes,
+  // so make sure that works both when the entry's chunks have already run and
+  // registered themselves, and when they run after the runtime.
+  it.each([
+    ['before', 'the entry chunks run before the shared runtime'],
+    ['after', 'the entry chunks run after the shared runtime'],
+  ])('should hydrate when %s: %s', async (order) => {
     const browser = await next.browser('/', {
       pushErrorAsConsoleLog: true,
       async beforePageLoad(page) {
@@ -141,17 +153,32 @@ describe('ppr-shared-runtime-csp-nonce', () => {
             const response = await route.fetch()
             let html = await response.text()
 
-            const blockingScripts = getBootstrapParams(html)
-              .otherChunks.map((chunk) =>
-                typeof chunk === 'string' ? chunk : chunk.path
-              )
-              .filter((path) => path.endsWith('.js'))
+            const [{ src, params }] = getBootstrapAttributeScripts(html)
+            const chunkScripts = getChunkScriptPaths(params)
               .map((path) => `<script src="/_next/${path}"></script>`)
               .join('')
 
-            html = html
-              .replace(/(<script src="[^"]+") async=""/g, '$1')
-              .replace('</head>', `${blockingScripts}</head>`)
+            // Make every script blocking, so their order is deterministic.
+            html = html.replace(/(<script src="[^"]+"[^>]*?) async=""/g, '$1')
+            if (order === 'before') {
+              // Blocking chunk scripts at the very start of the head run
+              // before the runtime script.
+              html = html.replace(/<head[^>]*>/, (head) => head + chunkScripts)
+            } else {
+              // Move the runtime to the very start of the head, so it runs
+              // before any of the entry's chunks. The attribute value is
+              // HTML-escaped, so it can't contain a raw `"`.
+              const runtimeTag = html.match(
+                new RegExp(
+                  `<script[^>]*${BOOTSTRAP_ATTRIBUTE}="[^"]*"[^>]*></script>`
+                )
+              )![0]
+              expect(runtimeTag).toContain(src)
+              html = html
+                .replace(runtimeTag, '')
+                .replace('</head>', `${chunkScripts}</head>`)
+                .replace(/<head[^>]*>/, (head) => head + runtimeTag)
+            }
             await route.fulfill({ response, body: html })
           }
         )
@@ -173,9 +200,10 @@ describe('ppr-shared-runtime-csp-nonce', () => {
     expect(pageErrors).toEqual([])
   })
 
-  it('should keep the bootstrap inline in fully static pages', async () => {
+  it('should carry the bootstrap on the shared runtime script in fully static pages', async () => {
     const html = await next.render('/static')
-    expect(getBootstrapScripts(html)).toEqual([{ nonce: undefined }])
+    expect(getInlineBootstrapScripts(html)).toEqual([])
+    expect(getBootstrapAttributeScripts(html)).toHaveLength(1)
 
     const browser = await next.browser('/static')
     await browser.waitForElementByCss('#counter[data-hydrated="true"]')

@@ -915,8 +915,9 @@ export interface ExperimentalConfig {
   turbopackMinifyBeforeChunking?: boolean
 
   /**
-   * Share the browser runtime across routes in a single `runtime.js` asset and inline the
-   * per-route chunk-group bootstrap into the HTML, dropping the per-route runtime. Defaults to
+   * Share the browser runtime across routes in a single `runtime.js` asset and pass the
+   * per-route chunk-group bootstrap in the HTML (App Router: as a `data-turbopack-bootstrap`
+   * attribute on the runtime's `<script>` tag), dropping the per-route runtime. Defaults to
    * true. Only applies to production builds; has no effect in development mode.
    */
   turbopackSharedRuntime?: boolean

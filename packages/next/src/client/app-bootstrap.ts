@@ -14,8 +14,10 @@ if (process.env.__NEXT_DEV_SERVER) {
 } else {
   // Only the dev server needs the asset prefix. In production,
   // `document.currentScript` isn't reliable: the Turbopack shared runtime can
-  // run this module from the inline chunk-group bootstrap script, e.g. when a
-  // resumed response emits that bootstrap after the runtime has loaded.
+  // run this module from its own script (when that script's
+  // `data-turbopack-bootstrap` attribute carries the chunk-group bootstrap), or
+  // from an inline bootstrap script, e.g. when a resumed response emits that
+  // bootstrap after the runtime has loaded.
 }
 
 const version = process.env.__NEXT_VERSION

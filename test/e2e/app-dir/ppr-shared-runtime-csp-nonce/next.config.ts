@@ -3,8 +3,8 @@ import type { NextConfig } from 'next'
 const nextConfig: NextConfig = {
   cacheComponents: true,
   experimental: {
-    // This is the default, but pin it since the suite is about the inlined
-    // Turbopack chunk-group bootstrap that the shared runtime produces.
+    // Pin it since the suite is about the Turbopack chunk-group bootstrap that
+    // the shared runtime receives from its `<script>` tag attribute.
     turbopackSharedRuntime: true,
   },
 }

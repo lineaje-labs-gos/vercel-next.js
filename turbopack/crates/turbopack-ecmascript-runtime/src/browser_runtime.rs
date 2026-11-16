@@ -264,6 +264,18 @@ pub async fn get_browser_runtime_code(
         "#,
         chunk_loading_global = StringifyJs(&chunk_loading_global),
     )?;
+    // The host page can also pass chunk group bootstrap params as a data attribute on the
+    // runtime's `<script>` tag instead of pushing them from an inline script (which a strict CSP
+    // would block). `document.currentScript` is only set while this script executes, so this
+    // must run synchronously here.
+    if matches!(chunk_loading, ChunkLoading::Dom) {
+        writedoc!(
+            code,
+            r#"
+            getBootstrapParamsFromScriptAttribute().forEach(registerChunk);
+        "#,
+        )?;
+    }
     if matches!(runtime_type, RuntimeType::Development) {
         writedoc!(
             code,

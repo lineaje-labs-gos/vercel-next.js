@@ -2332,6 +2332,27 @@ function getAssetSuffixFromScriptSrc() {
     return qi >= 0 ? src.slice(qi) : '';
 }
 /**
+ * The attribute on the runtime's own `<script>` tag that can carry chunk group
+ * bootstrap params, as a JSON array of `RuntimeParams`. This lets a host page
+ * bootstrap entries without an inline script: it tags the runtime script with
+ * the params of the entries it renders, and the runtime registers them when it
+ * executes.
+ */ const BOOTSTRAP_ATTRIBUTE = 'data-turbopack-bootstrap';
+/**
+ * Reads the bootstrap params from the `data-turbopack-bootstrap` attribute of
+ * the currently executing runtime `<script>`. Must be called synchronously
+ * while the runtime script executes, since `document.currentScript` is only set
+ * then. Returns no params in web workers, or when the attribute is absent.
+ */ function getBootstrapParamsFromScriptAttribute() {
+    if (typeof document === 'undefined') return [];
+    const json = document.currentScript?.getAttribute?.(BOOTSTRAP_ATTRIBUTE);
+    if (!json) return [];
+    const params = JSON.parse(json);
+    return Array.isArray(params) ? params : [
+        params
+    ];
+}
+/**
  * Whether a `src` / `href` attribute value refers to `url`: either exactly, or
  * with an additional query string (e.g. `?dpl=...`). Also matches the decoded
  * form of `url`.
@@ -2701,6 +2722,7 @@ function _eval({ code, url, map }) {
 }
 globalThis["TURBOPACK"] = { push: registerChunk };
 chunksToRegister.forEach(registerChunk);
+getBootstrapParamsFromScriptAttribute().forEach(registerChunk);
 var chunkListsToRegister = globalThis["TURBOPACK_CHUNK_LISTS"] || [];
 globalThis["TURBOPACK_CHUNK_LISTS"] = { push: registerChunkList };
 chunkListsToRegister.forEach(registerChunkList);

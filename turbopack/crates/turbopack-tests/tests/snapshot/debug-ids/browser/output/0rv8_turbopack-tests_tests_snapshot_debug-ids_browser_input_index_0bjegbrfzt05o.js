@@ -1,4 +1,4 @@
-;!function(){try { var e="undefined"!=typeof globalThis?globalThis:"undefined"!=typeof global?global:"undefined"!=typeof window?window:"undefined"!=typeof self?self:{},n=(new e.Error).stack;n&&((e._debugIds|| (e._debugIds={}))[n]="def46318-113b-4f82-5b10-6d3d2287859d")}catch(e){}}();
+;!function(){try { var e="undefined"!=typeof globalThis?globalThis:"undefined"!=typeof global?global:"undefined"!=typeof window?window:"undefined"!=typeof self?self:{},n=(new e.Error).stack;n&&((e._debugIds|| (e._debugIds={}))[n]="b72507cc-54b7-b36c-9a2c-5f733f36704f")}catch(e){}}();
 (globalThis["TURBOPACK"] || (globalThis["TURBOPACK"] = [])).push([
     "output/0rv8_turbopack-tests_tests_snapshot_debug-ids_browser_input_index_0bjegbrfzt05o.js",
     {"otherChunks":["output/0_9x_turbopack-tests_tests_snapshot_debug-ids_browser_input_index_03ibyvsq4xsbk.js"],"runtimeModuleIds":["[project]/turbopack/crates/turbopack-tests/tests/snapshot/debug-ids/browser/input/index.js [test] (ecmascript)"]}
@@ -2333,6 +2333,27 @@ function getAssetSuffixFromScriptSrc() {
     return qi >= 0 ? src.slice(qi) : '';
 }
 /**
+ * The attribute on the runtime's own `<script>` tag that can carry chunk group
+ * bootstrap params, as a JSON array of `RuntimeParams`. This lets a host page
+ * bootstrap entries without an inline script: it tags the runtime script with
+ * the params of the entries it renders, and the runtime registers them when it
+ * executes.
+ */ const BOOTSTRAP_ATTRIBUTE = 'data-turbopack-bootstrap';
+/**
+ * Reads the bootstrap params from the `data-turbopack-bootstrap` attribute of
+ * the currently executing runtime `<script>`. Must be called synchronously
+ * while the runtime script executes, since `document.currentScript` is only set
+ * then. Returns no params in web workers, or when the attribute is absent.
+ */ function getBootstrapParamsFromScriptAttribute() {
+    if (typeof document === 'undefined') return [];
+    const json = document.currentScript?.getAttribute?.(BOOTSTRAP_ATTRIBUTE);
+    if (!json) return [];
+    const params = JSON.parse(json);
+    return Array.isArray(params) ? params : [
+        params
+    ];
+}
+/**
  * Whether a `src` / `href` attribute value refers to `url`: either exactly, or
  * with an additional query string (e.g. `?dpl=...`). Also matches the decoded
  * form of `url`.
@@ -2702,11 +2723,12 @@ function _eval({ code, url, map }) {
 }
 globalThis["TURBOPACK"] = { push: registerChunk };
 chunksToRegister.forEach(registerChunk);
+getBootstrapParamsFromScriptAttribute().forEach(registerChunk);
 var chunkListsToRegister = globalThis["TURBOPACK_CHUNK_LISTS"] || [];
 globalThis["TURBOPACK_CHUNK_LISTS"] = { push: registerChunkList };
 chunkListsToRegister.forEach(registerChunkList);
 })();
 
 
-//# debugId=def46318-113b-4f82-5b10-6d3d2287859d
+//# debugId=b72507cc-54b7-b36c-9a2c-5f733f36704f
 //# sourceMappingURL=0_9x_turbopack-tests_tests_snapshot_debug-ids_browser_input_index_0bjegbrfzt05o.js.map

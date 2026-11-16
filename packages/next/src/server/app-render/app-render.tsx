@@ -78,7 +78,10 @@ import type { AnyStream } from './stream-ops'
 import { encodeTextChunk } from '../stream-utils/node-web-streams-helper'
 import { createRenderInBrowserAbortSignal } from './render-in-browser'
 import { getInstantTestBootstrapScriptContent } from './instant-test-bootstrap'
-import { createTurbopackBootstrapScriptStream } from './turbopack-bootstrap-script'
+import {
+  createTurbopackBootstrapScriptStream,
+  getTurbopackBootstrapData,
+} from './turbopack-bootstrap-script'
 import { stripInternalQueries } from '../internal-utils'
 import { getRenderedSearch } from '../../shared/lib/router/utils/querystring'
 import { NEXT_ROUTER_STALE_TIME_HEADER } from '../../client/components/app-router-headers'
@@ -3612,17 +3615,19 @@ async function renderToStream(
     subresourceIntegrityManifest
   )
 
-  const [preinitScripts, bootstrapScript] = getRequiredScripts(
-    buildManifest,
-    // Why is assetPrefix optional on renderOpts?
-    // @TODO make it default empty string on renderOpts and get rid of it from ctx
-    assetPrefix,
-    crossOrigin,
-    subresourceIntegrityManifest,
-    getAssetQueryString(ctx, true),
-    nonce,
-    page
-  )
+  const [preinitScripts, bootstrapScript, hasTurbopackBootstrapAttribute] =
+    getRequiredScripts(
+      buildManifest,
+      // Why is assetPrefix optional on renderOpts?
+      // @TODO make it default empty string on renderOpts and get rid of it from ctx
+      assetPrefix,
+      crossOrigin,
+      subresourceIntegrityManifest,
+      getAssetQueryString(ctx, true),
+      nonce,
+      page,
+      getTurbopackBootstrapData(buildManifest, [page])
+    )
 
   // In development mode, set the request ID as a global variable, before the
   // bootstrap script is executed, which depends on it during hydration.
@@ -3630,8 +3635,10 @@ async function renderToStream(
   // header is not present, so we generate a random one.
   let bootstrapScriptContent: string | undefined
   // The Turbopack chunk-group bootstrap is only set when the shared runtime is
-  // used. A Cache Components static shell doesn't include it (see
-  // `prerenderToStream`), so resuming one emits it with the request's nonce.
+  // used and its `<script>` tag can't carry it in its `data-turbopack-bootstrap`
+  // attribute (see `getRequiredScripts`). A Cache Components static shell
+  // doesn't include it (see `prerenderToStream`), so resuming one emits it with
+  // the request's nonce.
   let turbopackBootstrapScriptContent: string | undefined
   if (process.env.__NEXT_DEV_SERVER) {
     bootstrapScriptContent = `self.__next_r=${JSON.stringify(
@@ -3645,6 +3652,7 @@ async function renderToStream(
       )};`
     }
   } else if (
+    !hasTurbopackBootstrapAttribute &&
     buildManifest.pagesChunkGroupBootstrapParams &&
     buildManifest.chunkLoadingGlobal
   ) {
@@ -4471,20 +4479,28 @@ async function renderToStream(
         metadata.statusCode = res.statusCode
       }
 
-      const [errorPreinitScripts, errorBootstrapScript] = getRequiredScripts(
+      const [
+        errorPreinitScripts,
+        errorBootstrapScript,
+        errorHasTurbopackBootstrapAttribute,
+      ] = getRequiredScripts(
         buildManifest,
         assetPrefix,
         crossOrigin,
         subresourceIntegrityManifest,
         getAssetQueryString(ctx, false),
         nonce,
-        UNDERSCORE_NOT_FOUND_ROUTE_ENTRY
+        UNDERSCORE_NOT_FOUND_ROUTE_ENTRY,
+        getTurbopackBootstrapData(buildManifest, [
+          UNDERSCORE_NOT_FOUND_ROUTE_ENTRY,
+        ])
       )
 
       let errorBootstrapScriptContent: string | undefined
       if (process.env.__NEXT_DEV_SERVER) {
         errorBootstrapScriptContent = bootstrapScriptContent
       } else if (
+        !errorHasTurbopackBootstrapAttribute &&
         buildManifest.pagesChunkGroupBootstrapParams &&
         buildManifest.chunkLoadingGlobal
       ) {
@@ -9084,20 +9100,25 @@ async function prerenderToStream(
     subresourceIntegrityManifest
   )
 
-  const [preinitScripts, bootstrapScript] = getRequiredScripts(
-    buildManifest,
-    // Why is assetPrefix optional on renderOpts?
-    // @TODO make it default empty string on renderOpts and get rid of it from ctx
-    assetPrefix,
-    crossOrigin,
-    subresourceIntegrityManifest,
-    getAssetQueryString(ctx, true),
-    nonce,
-    page
-  )
+  const [preinitScripts, bootstrapScript, hasTurbopackBootstrapAttribute] =
+    getRequiredScripts(
+      buildManifest,
+      // Why is assetPrefix optional on renderOpts?
+      // @TODO make it default empty string on renderOpts and get rid of it from ctx
+      assetPrefix,
+      crossOrigin,
+      subresourceIntegrityManifest,
+      getAssetQueryString(ctx, true),
+      nonce,
+      page,
+      getTurbopackBootstrapData(buildManifest, [page])
+    )
 
-  // The Turbopack chunk-group bootstrap (only set with the shared runtime). The
-  // Cache Components prerenders below keep it out of the static shell: the
+  // The Turbopack chunk-group bootstrap (only set with the shared runtime).
+  // Usually the runtime's `<script>` tag carries it in its
+  // `data-turbopack-bootstrap` attribute, which needs no nonce and so can be part
+  // of the static shell. Otherwise it's an inline script, which the Cache
+  // Components prerenders below keep out of the static shell: the
   // shell is prerendered without a request, so an inline script in it can't
   // carry the request's CSP nonce, and on Vercel the shell is served before any
   // Next.js code runs, so it can't be added later either. Instead it's emitted
@@ -9105,6 +9126,7 @@ async function prerenderToStream(
   // the per-request resume (with the nonce) when the shell has postponed parts.
   // See `withTurbopackBootstrapScript`.
   const turbopackBootstrapScriptContent =
+    !hasTurbopackBootstrapAttribute &&
     buildManifest.pagesChunkGroupBootstrapParams &&
     buildManifest.chunkLoadingGlobal
       ? getTurbopackChunkGroupBootstrap(
@@ -10484,17 +10506,25 @@ async function prerenderToStream(
       }
     }
 
-    const [errorPreinitScripts, errorBootstrapScript] = getRequiredScripts(
+    const [
+      errorPreinitScripts,
+      errorBootstrapScript,
+      errorHasTurbopackBootstrapAttribute,
+    ] = getRequiredScripts(
       buildManifest,
       assetPrefix,
       crossOrigin,
       subresourceIntegrityManifest,
       getAssetQueryString(ctx, false),
       nonce,
-      UNDERSCORE_NOT_FOUND_ROUTE_ENTRY
+      UNDERSCORE_NOT_FOUND_ROUTE_ENTRY,
+      getTurbopackBootstrapData(buildManifest, [
+        UNDERSCORE_NOT_FOUND_ROUTE_ENTRY,
+      ])
     )
 
     const errorBootstrapScriptContent =
+      !errorHasTurbopackBootstrapAttribute &&
       buildManifest.pagesChunkGroupBootstrapParams &&
       buildManifest.chunkLoadingGlobal
         ? getTurbopackChunkGroupBootstrap(
