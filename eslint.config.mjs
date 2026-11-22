@@ -11,6 +11,7 @@ import tseslint from 'typescript-eslint'
 import nextEslintPluginInternal from '@next/eslint-plugin-internal'
 import mdxParser from 'eslint-mdx'
 import path from 'node:path'
+import { builtinModules } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import js from '@eslint/js'
 import { FlatCompat } from '@eslint/eslintrc'
@@ -525,6 +526,49 @@ export default defineConfig([
     },
   },
   {
+    // The native RSC runtime's renderer is engine-neutral: outside the engine forks,
+    // it uses no Node APIs, so it can run on other JS engines.
+    files: ['packages/next/src/native-rsc-runtime/**/*.{ts,tsx}'],
+    ignores: ['packages/next/src/native-rsc-runtime/forks/*.node.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          paths: builtinModules.map((name) => ({
+            name,
+            message:
+              'The native RSC runtime is engine-neutral. Put engine-specific code in an engine fork (forks/*.node.ts).',
+          })),
+          patterns: [
+            {
+              group: ['node:*'],
+              message:
+                'The native RSC runtime is engine-neutral. Put engine-specific code in an engine fork (forks/*.node.ts).',
+            },
+          ],
+        },
+      ],
+      'no-restricted-globals': [
+        'error',
+        ...[
+          'process',
+          'Buffer',
+          'global',
+          'require',
+          'module',
+          '__dirname',
+          '__filename',
+          'setImmediate',
+          'clearImmediate',
+        ].map((name) => ({
+          name,
+          message:
+            'The native RSC runtime is engine-neutral. Put engine-specific code in an engine fork (forks/*.node.ts).',
+        })),
+      ],
+    },
+  },
+  {
     files: ['examples/**/*'],
     linterOptions: {
       reportUnusedDisableDirectives: 'off',
@@ -561,6 +605,7 @@ export default defineConfig([
       'packages/next/taskfile*.js',
       'packages/next/next-devtools.webpack-config.js',
       'packages/next/next-runtime.webpack-config.js',
+      'packages/next/next-native-rsc-runtime.webpack-config.js',
     ],
     rules: {
       'no-shadow': [
