@@ -460,6 +460,55 @@ describe('local span recording', () => {
     ])
   })
 
+  it('keeps the OTel request span as the root across local-only spans', () => {
+    process.env.__NEXT_REQUEST_INSIGHTS = 'true'
+    context.setGlobalContextManager(new TestContextManager())
+    const delegateSpan = Object.assign(
+      trace.wrapSpanContext({
+        traceId: '0123456789abcdef0123456789abcdef',
+        spanId: '0123456789abcdef',
+        traceFlags: 1,
+      }),
+      { isRecording: () => true }
+    )
+    trace.setGlobalTracerProvider({
+      getTracer() {
+        return {
+          startSpan: () => delegateSpan,
+          startActiveSpan(...args: unknown[]) {
+            const callback = args.at(-1) as (
+              span: typeof delegateSpan
+            ) => unknown
+            return context.with(
+              trace.setSpan(context.active(), delegateSpan),
+              () => callback(delegateSpan)
+            )
+          },
+        }
+      },
+    })
+
+    const rootAttributes = getTracer().trace(
+      BaseServerSpan.handleRequest,
+      () => {
+        // `run` and `render` aren't exported to OTel, but Request Insights
+        // records them locally.
+        getTracer().trace(BaseServerSpan.run, () =>
+          getTracer().trace(BaseServerSpan.render, () =>
+            getTracer().setRootSpanAttribute('next.route', '/page')
+          )
+        )
+        return getTracer().getRootSpanAttributes()
+      }
+    )
+
+    expect(rootAttributes?.get('next.span_type')).toBe(
+      BaseServerSpan.handleRequest
+    )
+    expect(rootAttributes?.get('next.route')).toBe('/page')
+    expect(getSpanRecords({ name: BaseServerSpan.render })).toHaveLength(1)
+  })
+
   it('does not record or export hidden spans', () => {
     process.env.__NEXT_REQUEST_INSIGHTS = 'true'
     let receivedSpan: unknown = 'not-called'
