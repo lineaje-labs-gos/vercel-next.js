@@ -3,11 +3,11 @@ import path from 'path'
 import { nextTestSetup } from 'e2e-utils'
 import { retry } from 'next-test-utils'
 
-// The native RSC runtime requires Turbopack. Nothing serves its pages yet, so there's
-// nothing to deploy.
-// @force-gate turbopack && !deploy
+// The native RSC runtime requires Turbopack. On Vercel it deploys only through the
+// adapter.
+// @force-gate turbopack && (!deploy || adapter)
 describe('native-rsc-runtime', () => {
-  const { next, isNextDev } = nextTestSetup({
+  const { next, isNextDev, isNextStart, isNextDeploy } = nextTestSetup({
     files: __dirname,
   })
 
@@ -19,12 +19,78 @@ describe('native-rsc-runtime', () => {
       })
     })
   } else {
-    it('builds the page as dynamic', async () => {
-      const manifest = await next.readJSON('.next/prerender-manifest.json')
-      expect(Object.keys(manifest.routes)).not.toContain('/')
-      expect(await next.hasFile('.next/server/app/index.html')).toBe(false)
+    if (isNextStart) {
+      it('builds the page as dynamic', async () => {
+        const manifest = await next.readJSON('.next/prerender-manifest.json')
+        expect(Object.keys(manifest.routes)).not.toContain('/')
+        expect(await next.hasFile('.next/server/app/index.html')).toBe(false)
+      })
+    }
+
+    it('serves the page', async () => {
+      const res = await next.fetch('/')
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-type')).toBe('text/html; charset=utf-8')
+      expect(res.headers.get('cache-control')).toBe(
+        'private, no-cache, no-store, max-age=0, must-revalidate'
+      )
+      expect(await res.text()).toBe(
+        '<!DOCTYPE html><html><head></head><body><p>hello world</p></body></html>'
+      )
+    })
+
+    if (!isNextDeploy) {
+      it('replaces a header the config sets', async () => {
+        const res = await next.fetch('/?config-header=1')
+        expect(res.status).toBe(200)
+        expect(res.headers.get('content-type')).toBe('text/html; charset=utf-8')
+      })
+    }
+
+    it('answers methods other than GET and HEAD with a 405', async () => {
+      const res = await next.fetch('/', { method: 'POST' })
+      expect(res.status).toBe(405)
+      expect(res.headers.get('allow')).toBe('GET, HEAD')
+    })
+
+    it('leaves not-found on App Router', async () => {
+      const res = await next.fetch('/missing')
+      expect(res.status).toBe(404)
     })
   }
+})
+
+// @force-gate turbopack && !dev && (!deploy || adapter)
+describe('native-rsc-runtime with a page that throws', () => {
+  const { next, isNextDeploy } = nextTestSetup({
+    files: __dirname,
+    overrideFiles: {
+      // Each render throws an error of its own, numbered.
+      'app/page.tsx': [
+        'let renders = 0',
+        '',
+        'export default function Page() {',
+        '  renders++',
+        "  throw new Error('page failed (' + renders + ')')",
+        '}',
+      ].join('\n'),
+    },
+  })
+
+  it('renders a 500 and reports the error once', async () => {
+    const res = await next.fetch('/')
+    expect(res.status).toBe(500)
+    expect(await res.text()).toBe('')
+    if (!isNextDeploy) {
+      // Once the second render's error is logged, everything the first render
+      // reported has been logged too.
+      expect((await next.fetch('/')).status).toBe(500)
+      await retry(async () => {
+        expect(next.cliOutput).toContain('page failed (2)')
+      })
+      expect(next.cliOutput.split('page failed (1)').length - 1).toBe(1)
+    }
+  })
 })
 
 // These cases run failing builds, which can't be deployed.
