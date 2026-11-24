@@ -24,7 +24,9 @@ pub use crate::next_app::{
     app_client_shared_chunks::get_app_client_shared_chunk_group,
     app_entry::AppEntry,
     app_page_entry::get_app_page_entry,
-    app_page_native_rsc_runtime_entry::report_app_page_native_rsc_runtime,
+    app_page_native_rsc_runtime_entry::{
+        get_app_page_native_rsc_runtime_entry, report_app_page_native_rsc_runtime_client_references,
+    },
     app_route_entry::get_app_route_entry,
 };
 
