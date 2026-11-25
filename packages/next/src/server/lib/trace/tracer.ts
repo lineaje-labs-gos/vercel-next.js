@@ -429,6 +429,19 @@ class NextTracerImpl implements NextTracer {
 
     const spanId = getSpanId()
 
+    // A span that is only recorded locally (Request Insights) must not change
+    // which span `getRootSpanAttributes`/`setRootSpanAttribute` resolve to.
+    // Otherwise enabling local recording inserts extra spans (`BaseServer.run`,
+    // `BaseServer.render`, ...) between the request's root span and the code
+    // that sets `next.route`, and the OpenTelemetry `handleRequest` span loses
+    // its `http.route`. A local-only span that is itself a root still becomes
+    // one, so local-only traces keep their root attributes.
+    const isLocalOnlySpan = !(tracingEnabled && shouldDelegateSpan)
+    const rootSpanContext =
+      isRootSpan || !isLocalOnlySpan
+        ? spanContext.setValue(rootSpanIdKey, spanId)
+        : spanContext
+
     options.attributes = {
       'next.span_category': 'nextjs',
       'next.span_name': spanName,
@@ -436,7 +449,7 @@ class NextTracerImpl implements NextTracer {
       ...options.attributes,
     }
 
-    return context.with(spanContext.setValue(rootSpanIdKey, spanId), () =>
+    return context.with(rootSpanContext, () =>
       this.runWithActiveSpan(
         spanName,
         options,
