@@ -16,7 +16,6 @@ import {
 } from './request-insights-identity'
 import { MAX_LIVE_COMPLETED_REQUEST_INSIGHTS } from '../../../shared/lib/request-insights'
 
-const originalRequestInsights = process.env.__NEXT_REQUEST_INSIGHTS
 const originalDevServer = process.env.__NEXT_DEV_SERVER
 
 function restoreEnv(name: string, value: string | undefined) {
@@ -30,12 +29,10 @@ function restoreEnv(name: string, value: string | undefined) {
 describe('request insights', () => {
   beforeEach(() => {
     process.env.__NEXT_DEV_SERVER = '1'
-    process.env.__NEXT_REQUEST_INSIGHTS = 'true'
     registerRequestInsightsExporter()
   })
 
   afterEach(() => {
-    restoreEnv('__NEXT_REQUEST_INSIGHTS', originalRequestInsights)
     restoreEnv('__NEXT_DEV_SERVER', originalDevServer)
     clearRequestInsightsForTest()
   })

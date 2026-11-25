@@ -182,12 +182,11 @@ export async function initialize(opts: {
   if (bundlerBeforeConfig !== undefined) {
     finalizeBundlerFromConfig(bundlerBeforeConfig)
   }
-  // Set before workers fork so they inherit the opt-in.
-  if (opts.dev && config.experimental.requestInsights) {
-    process.env.__NEXT_REQUEST_INSIGHTS = 'true'
+  // Set before workers fork so they inherit the opt-out.
+  if (opts.dev && config.experimental.requestInsights === false) {
+    process.env.__NEXT_REQUEST_INSIGHTS = 'false'
+  } else if (opts.dev) {
     registerRequestInsightsExporter()
-  } else {
-    delete process.env.__NEXT_REQUEST_INSIGHTS
   }
 
   let compress: ReturnType<typeof setupCompression> | undefined
@@ -422,7 +421,7 @@ export async function initialize(opts: {
           res.end(
             JSON.stringify({
               error:
-                'Request Insights is not enabled. Set experimental.requestInsights = true and restart next dev.',
+                'Request Insights is disabled by experimental.requestInsights = false.',
             })
           )
           return

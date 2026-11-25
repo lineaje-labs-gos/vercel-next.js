@@ -32,7 +32,7 @@ export function registerGetRequestInsightsTool(server: McpServer) {
               type: 'text',
               text: JSON.stringify({
                 error:
-                  'Request Insights is not enabled. Set experimental.requestInsights = true in next.config.js and restart next dev.',
+                  'Request Insights is disabled by experimental.requestInsights = false.',
               }),
             },
           ],

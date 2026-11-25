@@ -164,7 +164,8 @@ export function isRequestInsightsEnabled(): boolean {
   // define-env inlines a boolean into bundled code; the router sets a string.
   return (
     Boolean(process.env.__NEXT_DEV_SERVER) &&
-    (value === 'true' || (value as unknown) === true)
+    value !== 'false' &&
+    (value as unknown) !== false
   )
 }
 
