@@ -252,10 +252,7 @@ export class WebpackHotMiddleware {
         },
         devIndicator: devIndicatorServerState,
         devToolsConfig: this.devToolsConfig,
-        requestInsights:
-          this.config.experimental.requestInsights || isRequestInsightsEnabled()
-            ? getRequestInsightsSnapshot()
-            : undefined,
+        requestInsights: getRequestInsightsSnapshot(),
       })
     }
   }
