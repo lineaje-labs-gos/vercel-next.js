@@ -134,7 +134,8 @@ use crate::{
         esm::{
             EsmAssetReference, EsmAssetReferenceOptions, EsmAsyncAssetReference, ImportMetaBinding,
             ImportMetaRef, UrlAssetReference, UrlRewriteBehavior, base::EsmAssetReferences,
-            binding::EsmBindingsBuilder, module_id::EsmModuleIdAssetReference,
+            binding::EsmBindingsBuilder, dynamic::EsmAsyncAssetReferenceCodeGen,
+            module_id::EsmModuleIdAssetReference,
         },
         exports::{EcmascriptExportsAnalysis, compute_ecmascript_module_exports},
         exports_info::{ExportsInfoBinding, ExportsInfoRef},
@@ -1174,6 +1175,7 @@ async fn analyze_ecmascript_module_internal(
                     span,
                     in_try,
                     export_usage,
+                    deferred,
                 } => {
                     let (args, argument_effects) = process_effect_args(args);
                     add_argument_effects(&mut queue_stack, argument_effects);
@@ -1186,6 +1188,7 @@ async fn analyze_ecmascript_module_internal(
                         in_try,
                         eval_context.imports.get_attributes(span),
                         export_usage,
+                        deferred,
                         ValueLinkContext::Default,
                     )
                     .await?;
@@ -1891,6 +1894,7 @@ async fn handle_dynamic_import<'a>(
     in_try: bool,
     attributes: &ImportAttributes,
     export_usage: ExportUsage,
+    deferred: bool,
     link_context: ValueLinkContext,
 ) -> Result<()> {
     // If the import has a webpackIgnore/turbopackIgnore comment, skip processing
@@ -1935,6 +1939,7 @@ async fn handle_dynamic_import<'a>(
         analysis,
         error_mode,
         export_usage,
+        deferred,
         link_context,
         lazy_compilation,
     )
@@ -1953,6 +1958,7 @@ async fn handle_dynamic_import_with_linked_args(
     analysis: &mut AnalyzeEcmascriptModuleResultBuilder,
     error_mode: ResolveErrorMode,
     export_usage: ExportUsage,
+    deferred: bool,
     link_context: ValueLinkContext,
     lazy_compilation: bool,
 ) -> Result<()> {
@@ -2007,21 +2013,34 @@ async fn handle_dynamic_import_with_linked_args(
             None
         };
 
-        analysis.add_reference_code_gen(
-            EsmAsyncAssetReference::new(
-                origin,
-                Request::parse(pat).to_resolved().await?,
-                issue_source(source, span),
-                import_annotations,
-                error_mode,
-                export_usage,
-                resolve_override,
-                lazy_compilation,
+        let reference = EsmAsyncAssetReference::new(
+            origin,
+            Request::parse(pat).to_resolved().await?,
+            issue_source(source, span),
+            import_annotations,
+            error_mode,
+            export_usage,
+            resolve_override,
+            lazy_compilation,
+            deferred,
+        )
+        .await?;
+        if deferred && link_context == ValueLinkContext::Default {
+            let (reference, async_flags, code_gen) = EsmAsyncAssetReferenceCodeGen::new_deferred(
+                reference,
+                analysis.intern_path(ast_path),
             )
-            .await?,
-            analysis.intern_path(ast_path),
-            link_context,
-        );
+            .await?;
+            analysis.add_reference(reference);
+            analysis.add_reference(async_flags);
+            analysis.add_code_gen(code_gen);
+        } else {
+            analysis.add_reference_code_gen(
+                reference,
+                analysis.intern_path(ast_path),
+                link_context,
+            );
+        }
         return Ok(());
     }
     let (args, hints) = JsValue::explain_args(linked_args, 10, 2);
@@ -2424,6 +2443,8 @@ where
                 analysis,
                 error_mode,
                 export_usage,
+                // only `import(...)` as a value can be called indirectly, `import.defer` can't
+                false,
                 link_context,
                 state.lazy_compilation,
             )
@@ -4005,6 +4026,9 @@ async fn handle_free_var_reference(
                             module_fragments_enabled: state.module_fragments_enabled,
                             export_usage_passthrough: None,
                             resolve_override: None,
+                            deferred: false,
+                            deferred_namespace: false,
+                            deferred_evaluation: None,
                         },
                     )
                     .await?
