@@ -612,38 +612,44 @@ export async function initialize(opts: {
 
       debug('invokeRender', req.url, req.headers)
 
-      // The identity scope is otherwise first entered in BaseServer, inside
-      // this span, which would leave the span without a request ID.
-      const requestInsightsIdentity = getRequestMeta(
-        req,
-        'requestInsightsIdentity'
-      )
-      const traceRender = () =>
-        getTracer().trace(
-          RouterSpan.invokeRender,
-          {
-            spanName: 'route to render',
-            attributes: { 'next.route': invokePath },
-          },
-          async () => {
-            const initResult =
-              await renderServer?.instance?.initialize(renderServerOpts)
-            try {
-              await initResult?.requestHandler(req, res)
-            } catch (err) {
-              if (err instanceof NoFallbackError) {
-                await handleRequest(handleIndex + 1)
-                return
-              }
-              throw err
-            }
+      const render = async () => {
+        const initResult =
+          await renderServer?.instance?.initialize(renderServerOpts)
+        try {
+          await initResult?.requestHandler(req, res)
+        } catch (err) {
+          if (err instanceof NoFallbackError) {
+            await handleRequest(handleIndex + 1)
+            return
           }
-        )
+          throw err
+        }
+      }
+
+      // Only Request Insights in dev records the router-to-render handoff, so
+      // `next start` traces keep their existing root span. The identity scope
+      // is otherwise first entered in BaseServer, inside this span, which
+      // would leave the span without a request ID.
+      const requestInsightsIdentity = opts.dev
+        ? getRequestMeta(req, 'requestInsightsIdentity')
+        : undefined
 
       try {
-        return await (requestInsightsIdentity
-          ? runWithRequestInsightsIdentity(requestInsightsIdentity, traceRender)
-          : traceRender())
+        if (!requestInsightsIdentity) {
+          return await render()
+        }
+        return await runWithRequestInsightsIdentity(
+          requestInsightsIdentity,
+          () =>
+            getTracer().trace(
+              RouterSpan.invokeRender,
+              {
+                spanName: 'route to render',
+                attributes: { 'next.route': invokePath },
+              },
+              render
+            )
+        )
       } catch (e) {
         // If the client aborts before we can receive a response object (when
         // the headers are flushed), then we can early exit without further

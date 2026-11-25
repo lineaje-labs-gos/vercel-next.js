@@ -42,8 +42,11 @@ export function registerGetRequestInsightsTool(server: McpServer) {
       const snapshot = getRequestInsightsSnapshot()
       const memoryRequests = snapshot.requests.filter((insight) => {
         return (
+          // Instant Insights entries have their own ID and point at the
+          // request they validated, so return them with that request.
           (request.requestId === undefined ||
-            insight.requestId === request.requestId) &&
+            insight.requestId === request.requestId ||
+            insight.parentRequestId === request.requestId) &&
           (request.htmlRequestId === undefined ||
             insight.htmlRequestId === request.htmlRequestId)
         )
