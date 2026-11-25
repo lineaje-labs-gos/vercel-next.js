@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use anyhow::Result;
 use bytes::Bytes;
@@ -12,6 +12,7 @@ use turbo_tasks_testing::{Registration, register, run_once_without_cache_check};
 use crate::{
     AssetsForSourceMapping,
     evaluate::{EvaluatePool, Operation},
+    idle_timeout::NodePoolOptions,
     process_pool::{ChildProcessPool, PoolTestHandle},
 };
 
@@ -21,9 +22,17 @@ fn test_worker(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("tests/{name}"))
 }
 
+/// Pool options under which no idle process expires within a test.
+const NO_TIMEOUT: NodePoolOptions = NodePoolOptions {
+    idle_timeout: Duration::from_secs(3600),
+    min_idle: 0,
+};
+
 /// Create a pool backed by the given test worker JS file.
 async fn create_pool(worker: &str, concurrency: usize) -> Result<EvaluatePool> {
-    Ok(create_pool_with_handle(worker, concurrency).await?.0)
+    Ok(create_pool_with_handle(worker, concurrency, NO_TIMEOUT)
+        .await?
+        .0)
 }
 
 /// Create a pool backed by the given test worker JS file, together with a handle that observes
@@ -31,6 +40,7 @@ async fn create_pool(worker: &str, concurrency: usize) -> Result<EvaluatePool> {
 async fn create_pool_with_handle(
     worker: &str,
     concurrency: usize,
+    pool_options: NodePoolOptions,
 ) -> Result<(EvaluatePool, PoolTestHandle)> {
     let vfs = VirtualFileSystem::new();
     let fs: Vc<Box<dyn turbo_tasks_fs::FileSystem>> = Vc::upcast(vfs);
@@ -52,6 +62,7 @@ async fn create_pool_with_handle(
         root_path,
         concurrency,
         false,
+        pool_options,
     );
     let handle = pool.test_handle();
     Ok((pool.into_evaluate_pool(), handle))
@@ -339,10 +350,12 @@ async fn run_operation(pool: &EvaluatePool) -> u32 {
 #[cfg(target_os = "linux")]
 #[turbo_tasks::function(operation, root)]
 async fn cell_owned_test_pool() -> Result<Vc<EvaluatePool>> {
-    Ok(create_pool_with_handle("pool_test_worker.js", 2)
-        .await?
-        .0
-        .cell())
+    Ok(
+        create_pool_with_handle("pool_test_worker.js", 2, NO_TIMEOUT)
+            .await?
+            .0
+            .cell(),
+    )
 }
 
 #[cfg(target_os = "linux")]
@@ -367,10 +380,9 @@ async fn test_pool_cell_drop_on_turbo_tasks_shutdown_kills_idle_processes() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_pool_drop_kills_idle_processes() {
     run_once_without_cache_check(&REGISTRATION, async {
-        let (pool, handle) = create_pool_with_handle("pool_test_worker.js", 2)
+        let (pool, handle) = create_pool_with_handle("pool_test_worker.js", 2, NO_TIMEOUT)
             .await
             .unwrap();
-        assert!(handle.is_registered());
 
         let pid = run_operation(&pool).await;
         assert_eq!(handle.idle_count(), 1);
@@ -378,7 +390,6 @@ async fn test_pool_drop_kills_idle_processes() {
 
         drop(pool);
 
-        assert!(!handle.is_registered());
         assert!(!handle.is_queue_alive());
         wait_for_process_exit(pid).await;
     })
@@ -389,7 +400,7 @@ async fn test_pool_drop_kills_idle_processes() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_pool_drop_with_inflight_operation() {
     run_once_without_cache_check(&REGISTRATION, async {
-        let (pool, handle) = create_pool_with_handle("pool_test_worker.js", 2)
+        let (pool, handle) = create_pool_with_handle("pool_test_worker.js", 2, NO_TIMEOUT)
             .await
             .unwrap();
 
@@ -404,7 +415,6 @@ async fn test_pool_drop_with_inflight_operation() {
         assert_ne!(pid1, pid2);
 
         drop(pool);
-        assert!(!handle.is_registered());
 
         // The operations still work after their pool was dropped.
         let resp = send_recv(&mut op1, serde_json::json!({"after": "drop"})).await;
@@ -429,13 +439,12 @@ async fn test_pool_drop_with_inflight_operation() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_pool_drop_during_pre_warm() {
     run_once_without_cache_check(&REGISTRATION, async {
-        let (pool, handle) = create_pool_with_handle("pool_test_worker.js", 2)
+        let (pool, handle) = create_pool_with_handle("pool_test_worker.js", 2, NO_TIMEOUT)
             .await
             .unwrap();
 
         pool.pre_warm();
         drop(pool);
-        assert!(!handle.is_registered());
 
         // Pre-warming keeps the queue alive until the process has booted, then pushes the process
         // into the closed queue, which kills it.
@@ -456,10 +465,10 @@ async fn test_pool_drop_during_pre_warm() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_pool_drop_does_not_affect_other_pool() {
     run_once_without_cache_check(&REGISTRATION, async {
-        let (pool_a, handle_a) = create_pool_with_handle("pool_test_worker.js", 2)
+        let (pool_a, handle_a) = create_pool_with_handle("pool_test_worker.js", 2, NO_TIMEOUT)
             .await
             .unwrap();
-        let (pool_b, handle_b) = create_pool_with_handle("pool_test_worker.js", 2)
+        let (pool_b, handle_b) = create_pool_with_handle("pool_test_worker.js", 2, NO_TIMEOUT)
             .await
             .unwrap();
 
@@ -470,8 +479,7 @@ async fn test_pool_drop_does_not_affect_other_pool() {
         drop(pool_a);
         wait_for_process_exit(pid_a).await;
 
-        assert!(!handle_a.is_registered());
-        assert!(handle_b.is_registered());
+        assert!(!handle_a.is_queue_alive());
         assert!(is_process_running(pid_b));
         assert_eq!(handle_b.idle_count(), 1);
         assert_eq!(
@@ -479,6 +487,145 @@ async fn test_pool_drop_does_not_affect_other_pool() {
             pid_b,
             "the other pool should still reuse its idle process"
         );
+    })
+    .await;
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_pool_idle_timeout_stops_all_processes() {
+    run_once_without_cache_check(&REGISTRATION, async {
+        let options = NodePoolOptions {
+            idle_timeout: Duration::from_millis(200),
+            min_idle: 0,
+        };
+        let (pool, handle) = create_pool_with_handle("pool_test_worker.js", 2, options)
+            .await
+            .unwrap();
+
+        let pid = run_operation(&pool).await;
+        wait_for_process_exit(pid).await;
+        assert_eq!(handle.idle_count(), 0);
+        assert_eq!(pool.stats().workers, 0);
+
+        // The next operation boots a new process.
+        let new_pid = run_operation(&pool).await;
+        assert_ne!(new_pid, pid);
+        assert_eq!(pool.stats().bootup_count, 2);
+    })
+    .await;
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_pool_idle_timeout_keeps_min_idle() {
+    run_once_without_cache_check(&REGISTRATION, async {
+        let options = NodePoolOptions {
+            idle_timeout: Duration::from_millis(200),
+            min_idle: 1,
+        };
+        let (pool, handle) = create_pool_with_handle("pool_test_worker.js", 2, options)
+            .await
+            .unwrap();
+
+        // Make two processes idle.
+        let (pid1, pid2) = {
+            let mut op1 = pool.operation().await.unwrap();
+            let mut op2 = pool.operation().await.unwrap();
+            (
+                send_recv(&mut op1, serde_json::json!({"op": 1})).await.pid,
+                send_recv(&mut op2, serde_json::json!({"op": 2})).await.pid,
+            )
+        };
+        assert_ne!(pid1, pid2);
+
+        // One expires, and `min_idle` keeps the other one well past the timeout.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        while is_process_running(pid1) && is_process_running(pid2) {
+            assert!(tokio::time::Instant::now() < deadline, "no process expired");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        let kept = if is_process_running(pid1) { pid1 } else { pid2 };
+        assert!(is_process_running(kept));
+        assert_eq!(handle.idle_count(), 1);
+        assert_eq!(pool.stats().workers, 1);
+
+        // The next operation reuses the kept process.
+        assert_eq!(run_operation(&pool).await, kept);
+        assert_eq!(pool.stats().bootup_count, 2);
+    })
+    .await;
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_pool_idle_timeout_restarts_on_reuse() {
+    run_once_without_cache_check(&REGISTRATION, async {
+        let options = NodePoolOptions {
+            idle_timeout: Duration::from_millis(1000),
+            min_idle: 0,
+        };
+        let (pool, handle) = create_pool_with_handle("pool_test_worker.js", 2, options)
+            .await
+            .unwrap();
+
+        let start = tokio::time::Instant::now();
+        let pid = run_operation(&pool).await;
+        tokio::time::sleep_until(start + Duration::from_millis(500)).await;
+        // Reusing the process restarts its idle time.
+        assert_eq!(run_operation(&pool).await, pid);
+        tokio::time::sleep_until(start + Duration::from_millis(1200)).await;
+        // 1200ms after it first became idle, but only ~700ms after it became idle again.
+        assert!(is_process_running(pid));
+        assert_eq!(handle.idle_count(), 1);
+
+        wait_for_process_exit(pid).await;
+        assert_eq!(handle.idle_count(), 0);
+    })
+    .await;
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_pool_idle_timeout_ignores_busy_processes() {
+    run_once_without_cache_check(&REGISTRATION, async {
+        let options = NodePoolOptions {
+            idle_timeout: Duration::from_millis(100),
+            min_idle: 0,
+        };
+        let pool = create_pool_with_handle("pool_test_worker.js", 2, options)
+            .await
+            .unwrap()
+            .0;
+
+        let mut op = pool.operation().await.unwrap();
+        let pid = send_recv(&mut op, serde_json::json!({"step": 1})).await.pid;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let resp = send_recv(&mut op, serde_json::json!({"step": 2})).await;
+        assert_eq!(resp.pid, pid);
+        assert!(is_process_running(pid));
+    })
+    .await;
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_pool_idle_timeout_does_not_keep_pool_alive() {
+    run_once_without_cache_check(&REGISTRATION, async {
+        let options = NodePoolOptions {
+            idle_timeout: Duration::from_millis(100),
+            min_idle: 0,
+        };
+        let (pool, handle) = create_pool_with_handle("pool_test_worker.js", 2, options)
+            .await
+            .unwrap();
+
+        let pid = run_operation(&pool).await;
+        drop(pool);
+        // Only the pool referenced the queue: the task that stops idle processes doesn't.
+        assert!(!handle.is_queue_alive());
+        wait_for_process_exit(pid).await;
     })
     .await;
 }

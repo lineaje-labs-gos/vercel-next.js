@@ -4,7 +4,7 @@ use std::{
     mem::take,
     path::{Path, PathBuf},
     process::{ExitStatus, Stdio},
-    sync::{Arc, LazyLock},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -37,6 +37,7 @@ use crate::{
     backend::{CreatePoolFuture, CreatePoolOptions, NodeBackend},
     evaluate::{EvaluateOperation, EvaluatePool, NodeJsConnectError, Operation},
     format::FormattingMode,
+    idle_timeout::{NodePoolOptions, spawn_idle_reaper},
     pool_stats::{AcquiredPermits, NodeJsPoolStats},
     source_map::apply_source_mapping,
 };
@@ -576,42 +577,19 @@ impl NodeJsPoolProcess {
 
 type IdleProcessQueue = Arc<HeapQueue<NodeJsPoolProcess>>;
 
-/// The idle process queues of all live [`ChildProcessPool`]s of the whole application.
-/// This is used to scale down processes globally.
-///
-/// A pool registers its queue when it is created, and its [`PoolRegistration`] unregisters it
-/// when the pool is dropped.
-static ACTIVE_POOLS: LazyLock<Mutex<Vec<IdleProcessQueue>>> = LazyLock::new(Default::default);
-
-/// Publishes a pool's idle process queue in [`ACTIVE_POOLS`] for as long as the pool is alive.
+/// Closes a pool's idle process queue when the pool is dropped.
 ///
 /// The pool is owned by its `EvaluatePool` cell. When the cell is dropped (e.g. replaced after an
-/// invalidation, evicted, or dropped when turbo-tasks shuts down), this unregisters the queue and
-/// closes it: its idle processes are killed, and processes that in-flight operations or pre-warming
-/// return to it later are killed instead of being kept.
-struct PoolRegistration {
+/// invalidation, evicted, or dropped when turbo-tasks shuts down), this closes the queue: its idle
+/// processes are killed, and processes that in-flight operations or pre-warming return to it later
+/// are killed instead of being kept.
+struct ClosePoolOnDrop {
     idle_processes: IdleProcessQueue,
 }
 
-impl PoolRegistration {
-    fn new(idle_processes: IdleProcessQueue) -> Self {
-        ACTIVE_POOLS.lock().push(idle_processes.clone());
-        Self { idle_processes }
-    }
-}
-
-impl Drop for PoolRegistration {
+impl Drop for ClosePoolOnDrop {
     fn drop(&mut self) {
-        {
-            let mut pools = ACTIVE_POOLS.lock();
-            if let Some(pos) = pools
-                .iter()
-                .position(|q| Arc::ptr_eq(q, &self.idle_processes))
-            {
-                pools.swap_remove(pos);
-            }
-        }
-        // Close the queue after releasing `ACTIVE_POOLS`: dropping the idle processes kills them.
+        // Dropping the idle processes kills them.
         self.idle_processes.close();
     }
 }
@@ -674,9 +652,9 @@ struct ChildProcessPool {
     project_dir: FileSystemPath,
     #[turbo_tasks(unsafe_ignore, debug_ignore)]
     idle_processes: IdleProcessQueue,
-    /// Keeps `idle_processes` registered in [`ACTIVE_POOLS`] until the pool is dropped.
+    /// Closes `idle_processes` when the pool is dropped.
     #[turbo_tasks(unsafe_ignore, debug_ignore)]
-    _registration: PoolRegistration,
+    _close_on_drop: ClosePoolOnDrop,
     /// Semaphore to limit the number of concurrent operations in general
     #[turbo_tasks(unsafe_ignore, debug_ignore)]
     concurrency_semaphore: Arc<Semaphore>,
@@ -705,6 +683,7 @@ impl ChildProcessPool {
         project_dir: FileSystemPath,
         concurrency: usize,
         debug: bool,
+        pool_options: NodePoolOptions,
     ) -> EvaluatePool {
         Self::new(
             cwd,
@@ -715,10 +694,13 @@ impl ChildProcessPool {
             project_dir,
             concurrency,
             debug,
+            pool_options,
         )
         .into_evaluate_pool()
     }
 
+    /// Must be called within a Tokio runtime: this starts the task that stops expired idle
+    /// processes.
     fn new(
         cwd: PathBuf,
         entrypoint: PathBuf,
@@ -728,8 +710,23 @@ impl ChildProcessPool {
         project_dir: FileSystemPath,
         concurrency: usize,
         debug: bool,
+        pool_options: NodePoolOptions,
     ) -> Self {
         let idle_processes = Arc::new(HeapQueue::new());
+        let stats: Arc<Mutex<NodeJsPoolStats>> = Default::default();
+        spawn_idle_reaper(&idle_processes, pool_options, {
+            let stats = stats.clone();
+            move |expired: Vec<NodeJsPoolProcess>| {
+                {
+                    let mut stats = stats.lock();
+                    for _ in &expired {
+                        stats.remove_worker();
+                    }
+                }
+                // Dropping the processes kills them.
+                drop(expired);
+            }
+        });
         Self {
             cwd,
             entrypoint,
@@ -739,12 +736,14 @@ impl ChildProcessPool {
             project_dir,
             concurrency_semaphore: Arc::new(Semaphore::new(if debug { 1 } else { concurrency })),
             bootup_semaphore: Arc::new(Semaphore::new(1)),
-            _registration: PoolRegistration::new(idle_processes.clone()),
+            _close_on_drop: ClosePoolOnDrop {
+                idle_processes: idle_processes.clone(),
+            },
             idle_processes,
             shared_stdout: Arc::new(Mutex::new(FxIndexSet::default())),
             shared_stderr: Arc::new(Mutex::new(FxIndexSet::default())),
             debug,
-            stats: Default::default(),
+            stats,
         }
     }
 
@@ -776,17 +775,6 @@ struct PoolTestHandle {
 
 #[cfg(test)]
 impl PoolTestHandle {
-    /// Whether the pool's idle process queue is registered in [`ACTIVE_POOLS`].
-    fn is_registered(&self) -> bool {
-        let Some(idle_processes) = self.idle_processes.upgrade() else {
-            return false;
-        };
-        ACTIVE_POOLS
-            .lock()
-            .iter()
-            .any(|q| Arc::ptr_eq(q, &idle_processes))
-    }
-
     /// The number of idle processes in the pool's queue. 0 once the queue is closed or dropped.
     fn idle_count(&self) -> usize {
         self.idle_processes.upgrade().map_or(0, |q| q.len())
@@ -798,8 +786,11 @@ impl PoolTestHandle {
     }
 }
 
+/// Runs Node.js code in pools of child processes.
 #[turbo_tasks::value(shared)]
-pub(crate) struct ChildProcessesBackend;
+pub(crate) struct ChildProcessesBackend {
+    pub(crate) pool_options: NodePoolOptions,
+}
 
 #[turbo_tasks::value_impl]
 impl NodeBackend for ChildProcessesBackend {
@@ -812,6 +803,7 @@ impl NodeBackend for ChildProcessesBackend {
     }
 
     fn create_pool(&self, options: CreatePoolOptions) -> CreatePoolFuture {
+        let pool_options = self.pool_options;
         Box::pin(async move {
             let CreatePoolOptions {
                 cwd,
@@ -833,18 +825,9 @@ impl NodeBackend for ChildProcessesBackend {
                 project_dir,
                 concurrency,
                 debug,
+                pool_options,
             ))
         })
-    }
-
-    fn scale_down(&self) -> Result<()> {
-        ChildProcessPool::scale_down();
-        Ok(())
-    }
-
-    fn scale_zero(&self) -> Result<()> {
-        ChildProcessPool::scale_zero();
-        Ok(())
     }
 }
 
@@ -972,20 +955,6 @@ impl ChildProcessPool {
             .create_process()
             .await
             .context("creating new process")
-    }
-
-    fn scale_down() {
-        let pools = ACTIVE_POOLS.lock().clone();
-        for pool in pools {
-            pool.reduce_to_one();
-        }
-    }
-
-    fn scale_zero() {
-        let pools = ACTIVE_POOLS.lock().clone();
-        for pool in pools {
-            pool.reduce_to_zero();
-        }
     }
 }
 
