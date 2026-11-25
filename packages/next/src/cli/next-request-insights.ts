@@ -75,12 +75,15 @@ export async function nextRequestInsights(
       ? data.requests.filter((request) => matchesRoute(request, route))
       : data.requests
     const limit = options.limit ?? DEFAULT_REQUEST_LIMIT
+    // Both orders keep the most recent requests; `start` lays them out in
+    // timeline order so overlapping work reads top to bottom.
+    const recentRequests = requests.slice(-limit)
     const visibleRequests =
       options.sort === 'start'
-        ? [...requests]
-            .sort((first, second) => first.startTime - second.startTime)
-            .slice(0, limit)
-        : requests.slice(-limit).reverse()
+        ? recentRequests.sort(
+            (first, second) => first.startTime - second.startTime
+          )
+        : recentRequests.reverse()
     if (options.json) {
       console.log(
         JSON.stringify(
@@ -154,7 +157,7 @@ function printRequestList(
   timeline = false
 ): void {
   console.log(
-    `Showing ${visibleRequests.length} of ${totalRequests} retained requests (newest first).`
+    `Showing ${visibleRequests.length} of ${totalRequests} retained requests (${timeline ? 'most recent, by start time' : 'newest first'}).`
   )
 
   const firstStart = Math.min(
@@ -220,11 +223,16 @@ function findRequest(
   const candidates = kind
     ? requests.filter((request) => getRequestInsightKind(request) === kind)
     : requests
-  const exact = candidates.filter((request) => request.requestId === id)
-  const matches =
-    exact.length > 0
-      ? exact
-      : candidates.filter((request) => request.requestId.startsWith(id))
+  let matches = matchRequestIds(candidates, id, (request) => request.requestId)
+  // Instant Insights entries have their own ID and point at the request they
+  // validated, so that request's ID also selects its validation entry.
+  if (matches.length === 0 && kind === 'instant-insights') {
+    matches = matchRequestIds(
+      candidates,
+      id,
+      (request) => request.parentRequestId
+    )
+  }
   if (matches.length === 0) {
     return exitWithError(`No retained request matches "${id}".`)
   }
@@ -239,11 +247,23 @@ function findRequest(
         .join('\n')}`
     )
   }
-  // Instant Insights entries share the request ID of the request they validated.
+  // Entries recorded before Instant Insights had their own ID share the
+  // request ID of the request they validated.
   return (
     matches.find((request) => getRequestInsightKind(request) === 'request') ??
     matches[0]
   )
+}
+
+function matchRequestIds(
+  requests: RequestInsight[],
+  id: string,
+  getId: (request: RequestInsight) => string | undefined
+): RequestInsight[] {
+  const exact = requests.filter((request) => getId(request) === id)
+  return exact.length > 0
+    ? exact
+    : requests.filter((request) => getId(request)?.startsWith(id))
 }
 
 function printRequestDetails(

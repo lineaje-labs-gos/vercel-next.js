@@ -2044,6 +2044,62 @@ describe('request insights', () => {
     })
   })
 
+  it('resolves an Instant Insights entry by the request it validated', async () => {
+    const request = createRequest(1)
+    const instantInsights = {
+      ...createRequest(2),
+      requestId: 'validation-1',
+      parentRequestId: request.requestId,
+      kind: 'instant-insights',
+      route: '/instant',
+    } satisfies RequestInsight
+    const body = { requests: [request, instantInsights] }
+
+    const byParent = await runWithResponse(body, [
+      'get',
+      request.requestId,
+      '--kind',
+      'instant-insights',
+      '--json',
+    ])
+    expect(byParent.result.code).toBe(0)
+    expect(JSON.parse(byParent.result.stdout)).toEqual({
+      request: instantInsights,
+    })
+
+    const byId = await runWithResponse(body, [
+      'get',
+      request.requestId,
+      '--json',
+    ])
+    expect(JSON.parse(byId.result.stdout)).toEqual({ request })
+  })
+
+  it('lists the most recent requests in start order with --sort start', async () => {
+    const requests = [1, 2, 3].map((index) => ({
+      ...createRequest(index),
+      startTime: index * 100,
+      durationMs: 10,
+    }))
+
+    const { result } = await runWithResponse({ requests }, [
+      'list',
+      '--sort',
+      'start',
+      '--limit',
+      '2',
+    ])
+
+    expect(result.code).toBe(0)
+    expect(result.stdout).toContain(
+      'Showing 2 of 3 retained requests (most recent, by start time).'
+    )
+    expect(result.stdout).not.toContain('/route-1 ')
+    expect(result.stdout.indexOf('/route-2')).toBeLessThan(
+      result.stdout.indexOf('/route-3')
+    )
+  })
+
   it('prints unique IDs, timeline offsets, overlaps, and ambiguity candidates', async () => {
     const first = {
       ...createRequest(1),

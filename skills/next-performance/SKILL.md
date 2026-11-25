@@ -18,8 +18,9 @@ Default: diagnose. Edit only on explicit request.
   its local `next experimental-request-insights list` to find the page or API
   request and `get` to inspect it. Pass `--url` if lockfile discovery cannot
   find a custom dev server. The server retains up to 500 completed requests.
-  If Request Insights is not enabled, set `experimental.requestInsights: true`
-  in `next.config`, restart the same development command, and reproduce the
+  If it reports that Request Insights is disabled, set
+  `experimental.requestInsights: true` in `next.config`, restart the same
+  development command, wait until it is ready, and reproduce the affected
   request once. State that an unrecorded original request cannot be recovered.
   Read the result with **Reading a dev timeline** below.
 
