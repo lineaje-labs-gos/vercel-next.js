@@ -33,7 +33,7 @@ export function getActiveRequestKey(
 export function isInternalRequestInsight(
   request: Pick<RequestInsight, 'kind'>
 ): boolean {
-  return getRequestInsightKind(request) !== 'request'
+  return getRequestInsightKind(request) === 'instant-insights'
 }
 
 export type RequestListEntry = {
@@ -96,6 +96,7 @@ export type RequestInsightRowType =
   | 'asset'
   | 'proxy'
   | 'instant-insights'
+  | 'background'
   | 'unknown'
 
 export type RequestInsightRowTypePresentation = Readonly<{
@@ -135,6 +136,11 @@ const REQUEST_INSIGHT_ROW_TYPES: Readonly<
     label: 'Instant',
     accessibleLabel: 'Instant Insights activity',
   },
+  background: {
+    type: 'background',
+    label: 'Background',
+    accessibleLabel: 'Background activity',
+  },
   unknown: {
     type: 'unknown',
     label: 'Unknown',
@@ -164,6 +170,8 @@ export function getRequestInsightRowType(
       return REQUEST_INSIGHT_ROW_TYPES.proxy
     case 'instant-insights':
       return REQUEST_INSIGHT_ROW_TYPES['instant-insights']
+    case 'background':
+      return REQUEST_INSIGHT_ROW_TYPES.background
     case 'unknown':
       return REQUEST_INSIGHT_ROW_TYPES.unknown
   }
@@ -237,6 +245,7 @@ export function getRequestInsightRepresentation(
     case 'asset':
     case 'proxy':
     case 'instant-insights':
+    case 'background':
       return 'not-applicable'
   }
 }

@@ -43,6 +43,7 @@ export const REQUEST_INSIGHT_FILTER_GROUPS: readonly RequestInsightFilterGroup[]
         { value: 'activity:proxy', label: 'Matched proxy' },
         { value: 'activity:instant-insights', label: 'Instant Insights' },
         { value: 'activity:opentelemetry', label: 'OpenTelemetry' },
+        { value: 'activity:background', label: 'Background activity' },
       ],
     },
     {
@@ -86,7 +87,8 @@ export function getRequestInsightFilterResult(
   const revealInternal =
     showInternal || activeFilters.includes('activity:instant-insights')
   const visibleRequests = requests.filter(
-    (request) => getRequestInsightKind(request) === 'request' || revealInternal
+    (request) =>
+      getRequestInsightKind(request) !== 'instant-insights' || revealInternal
   )
   const optionCounts = Object.fromEntries(
     REQUEST_INSIGHT_FILTERS.map((filter) => [filter, 0])
@@ -94,7 +96,7 @@ export function getRequestInsightFilterResult(
 
   for (const request of requests) {
     const tags = getRequestInsightTags(request)
-    if (getRequestInsightKind(request) === 'request' || showInternal) {
+    if (getRequestInsightKind(request) !== 'instant-insights' || showInternal) {
       for (const tag of tags) {
         optionCounts[tag] += 1
       }

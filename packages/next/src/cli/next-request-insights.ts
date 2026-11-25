@@ -169,9 +169,18 @@ function printRequestList(
     const route = request.route ?? request.url ?? request.requestId
     const kind = getRequestInsightKind(request)
     const duration = formatDuration(request.durationMs)
-    console.log(
-      `${kind === 'instant-insights' ? `Instant Insights · ${route}` : route} ${duration} ${request.status ?? 'pending'}`
-    )
+    let displayRoute = route
+    switch (kind) {
+      case 'request':
+        break
+      case 'instant-insights':
+        displayRoute = `Instant Insights · ${route}`
+        break
+      case 'background':
+        displayRoute = `Background · ${route}`
+        break
+    }
+    console.log(`${displayRoute} ${duration} ${request.status ?? 'pending'}`)
     console.log(
       `  kind ${kind} id ${displayIds.get(request) ?? request.requestId} page ${shortId(request.htmlRequestId)}`
     )

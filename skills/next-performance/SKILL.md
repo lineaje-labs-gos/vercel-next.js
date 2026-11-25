@@ -42,16 +42,16 @@ The bundled Request Insights guide explains request kinds and gap attribution.
 These dev-server effects distort a single request; weigh them before naming a
 bottleneck:
 
-- **Gaps are dev work without spans.** A long gap before `route to render` is
-  usually route compilation. On a dynamic route, a gap at the start of
-  `BaseServer.renderToResponseWithComponents` is usually static params
+- **Compilation is a `compile-path` span.** A cold route compile appears as
+  `compile-path` inside the request that triggered it.
+- **Static params generation has no span.** On a dynamic route, a gap at the
+  start of `BaseServer.renderToResponseWithComponents` is usually static params
   generation, which loads and evaluates the route's modules in a worker. Confirm
   by repeating the request: time that disappears on the warm request was
   compilation or module evaluation.
-- **`compile route` spans under the proxy compile the proxy.** Their duration
-  says nothing about compiling the page.
-- **Concurrent first requests share one compile.** A request that starts while
-  another request is compiling the same route waits for it; compare start times
+- **Concurrent first requests share one compile.** Only the request that
+  started the compile has the `compile-path` span; a request that starts while
+  the same route is compiling waits in an untraced gap. Compare start times
   before blaming the later request.
 - **Nested wrappers with the same duration are one interval.** Read the
   innermost span of the chain.

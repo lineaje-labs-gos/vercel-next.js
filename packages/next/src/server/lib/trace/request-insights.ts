@@ -25,7 +25,7 @@ import {
 } from './span-store'
 import { getRequestIsRsc } from '../../../shared/lib/request-insights-summary'
 import type { RequestInsightsIdentity } from './request-insights-identity'
-import { reparentLocalSpans } from './local-span-recorder'
+import { reparentLocalSpans } from './local-span-ids'
 import { AppRenderSpan } from './constants'
 export { isRequestInsightsEnabled }
 
@@ -100,6 +100,8 @@ class InMemoryRequestInsightsStore {
 
     const recordedSpan = sanitizeRecordedSpan(span)
     const fetch = getFetchInsight(span) ?? undefined
+    // A fetch span's URL is the outgoing request, not this one.
+    const requestUrl = fetch ? undefined : span.url
     const insight = this.getOrCreateRequest(
       {
         requestId: span.requestId,
@@ -109,7 +111,7 @@ class InMemoryRequestInsightsStore {
         proxyStatus: span.requestInsightProxyStatus,
         htmlRequestId: span.htmlRequestId,
         route: span.route,
-        url: span.url,
+        url: requestUrl,
       },
       span.startTime ?? span.timestamp
     )
@@ -129,9 +131,11 @@ class InMemoryRequestInsightsStore {
       span
     )
     insight.route = insight.route ?? span.route
-    insight.url = insight.url ?? sanitizeUrl(span.url)
+    insight.url = insight.url ?? sanitizeUrl(requestUrl)
     const spanType = span.attributes?.['next.span_type']
-    const isRequestSpan = spanType === REQUEST_INSIGHT_REQUEST_SPAN_TYPE
+    const isRequestSpan =
+      spanType === REQUEST_INSIGHT_REQUEST_SPAN_TYPE ||
+      span.requestInsightRoot === true
     if (isRequestSpan && insight.route) {
       nameRequestSpan(recordedSpan, insight.route)
     }
@@ -150,7 +154,8 @@ class InMemoryRequestInsightsStore {
 
     if (
       span.durationMs !== undefined &&
-      spanType === AppRenderSpan.instantInsights
+      (spanType === AppRenderSpan.instantInsights ||
+        span.requestInsightRoot === true)
     ) {
       this.complete(insight, spanStartTime + span.durationMs)
     }

@@ -839,7 +839,9 @@ describe('request insights', () => {
           root?.querySelectorAll<HTMLButtonElement>('.request-insights-row') ??
             []
         ).find(
-          (candidate) => !candidate.textContent?.includes('Instant Insights')
+          (candidate) =>
+            !candidate.textContent?.includes('Instant Insights') &&
+            !candidate.textContent?.includes('Background')
         )
         row?.click()
         return row !== undefined

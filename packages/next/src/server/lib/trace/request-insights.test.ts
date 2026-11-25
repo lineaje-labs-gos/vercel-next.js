@@ -168,6 +168,27 @@ describe('request insights', () => {
     unsubscribe()
   })
 
+  it('keeps the request URL when a fetch span is recorded first', () => {
+    process.env.__NEXT_DEV_SERVER = 'true'
+    startRequestInsight({ requestId: 'req_fetch_first' })
+    recordSpan({
+      name: 'fetch GET https://api.example.com/data',
+      requestId: 'req_fetch_first',
+      url: 'https://api.example.com/data',
+      attributes: {
+        'next.span_type': 'AppRender.fetch',
+        'http.url': 'https://api.example.com/data',
+      },
+    })
+    recordSpan({ name: 'GET', requestId: 'req_fetch_first', url: '/page' })
+
+    expect(
+      getRequestInsightsSnapshot().requests.find(
+        (insight) => insight.requestId === 'req_fetch_first'
+      )?.url
+    ).toBe('/page')
+  })
+
   it('names the request span with the request route', () => {
     process.env.__NEXT_DEV_SERVER = 'true'
     startRequestInsight({ requestId: 'req_named' })

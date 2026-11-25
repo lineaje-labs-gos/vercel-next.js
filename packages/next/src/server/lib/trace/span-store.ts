@@ -41,6 +41,7 @@ export type SpanStoreRecord = {
   requestInsightKind?: RequestInsightKind
   requestInsightSource?: RequestInsightSource
   requestInsightProxyStatus?: RequestInsightProxyStatus
+  requestInsightRoot?: boolean
   htmlRequestId?: string
   route?: string
   url?: string
