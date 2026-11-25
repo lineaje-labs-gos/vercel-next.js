@@ -72,6 +72,7 @@ import { isCI } from '../ci-info'
 import {
   completeRequestInsight,
   getRequestInsightsSnapshot,
+  isRequestInsightsEnabled,
   recordRequestInsightSource,
 } from './trace/request-insights'
 import {
@@ -179,6 +180,12 @@ export async function initialize(opts: {
   )
   if (bundlerBeforeConfig !== undefined) {
     finalizeBundlerFromConfig(bundlerBeforeConfig)
+  }
+  // Set before workers fork so they inherit the opt-in.
+  if (opts.dev && config.experimental.requestInsights) {
+    process.env.__NEXT_REQUEST_INSIGHTS = 'true'
+  } else {
+    delete process.env.__NEXT_REQUEST_INSIGHTS
   }
 
   let compress: ReturnType<typeof setupCompression> | undefined
@@ -378,15 +385,17 @@ export async function initialize(opts: {
     }
 
     if (opts.dev && req.url) {
-      filterInvalidDevRequestIdHeaders(req.headers)
-      const identity = resolveRequestInsightsIdentity({
-        previousIdentity: getRequestMeta(req, 'requestInsightsIdentity'),
-        requestIdHeader: req.headers[NEXT_REQUEST_ID_HEADER],
-        htmlRequestIdHeader: req.headers[NEXT_HTML_REQUEST_ID_HEADER],
-        url: req.url,
-        createRequestId: nanoid,
-      })
-      addRequestMeta(req, 'requestInsightsIdentity', identity)
+      if (isRequestInsightsEnabled()) {
+        filterInvalidDevRequestIdHeaders(req.headers)
+        const identity = resolveRequestInsightsIdentity({
+          previousIdentity: getRequestMeta(req, 'requestInsightsIdentity'),
+          requestIdHeader: req.headers[NEXT_REQUEST_ID_HEADER],
+          htmlRequestIdHeader: req.headers[NEXT_HTML_REQUEST_ID_HEADER],
+          url: req.url,
+          createRequestId: nanoid,
+        })
+        addRequestMeta(req, 'requestInsightsIdentity', identity)
+      }
 
       const urlParts = req.url.split('?', 1)
       const pathname = removePathPrefix(urlParts[0] || '', config.basePath)
@@ -415,6 +424,16 @@ export async function initialize(opts: {
         if (req.method !== 'GET' && req.method !== 'HEAD') {
           res.statusCode = 405
           res.end(JSON.stringify({ error: 'Method not allowed' }))
+          return
+        }
+        if (!isRequestInsightsEnabled()) {
+          res.statusCode = 404
+          res.end(
+            JSON.stringify({
+              error:
+                'Request Insights is not enabled. Set experimental.requestInsights = true and restart next dev.',
+            })
+          )
           return
         }
         const endpointUrl = new URL(req.url, 'http://next.local')

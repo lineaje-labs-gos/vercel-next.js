@@ -16,6 +16,7 @@ import {
   type SpanStoreRecord,
 } from './span-store'
 
+const originalRequestInsights = process.env.__NEXT_REQUEST_INSIGHTS
 const originalDevServer = process.env.__NEXT_DEV_SERVER
 
 function restoreEnv(name: string, value: string | undefined) {
@@ -29,9 +30,11 @@ function restoreEnv(name: string, value: string | undefined) {
 describe('span recording', () => {
   beforeEach(() => {
     process.env.__NEXT_DEV_SERVER = '1'
+    process.env.__NEXT_REQUEST_INSIGHTS = 'true'
   })
 
   afterEach(() => {
+    restoreEnv('__NEXT_REQUEST_INSIGHTS', originalRequestInsights)
     restoreEnv('__NEXT_DEV_SERVER', originalDevServer)
     setSpanRecorderForTest(undefined)
     setLocalSpanExporter(undefined)
@@ -189,6 +192,20 @@ describe('span recording', () => {
     recordSpan({ name: 'test.production', requestId: 'req_2' })
     expect(recorder).not.toHaveBeenCalled()
     expect(getRequestInsightsSnapshot()).toEqual({ requests: [] })
+  })
+
+  it('honors the experimental.requestInsights opt-in', () => {
+    const original = process.env.__NEXT_REQUEST_INSIGHTS
+    try {
+      process.env.__NEXT_DEV_SERVER = 'true'
+      delete process.env.__NEXT_REQUEST_INSIGHTS
+      expect(isRequestInsightsEnabled()).toBe(false)
+      process.env.__NEXT_REQUEST_INSIGHTS = 'true'
+      expect(isRequestInsightsEnabled()).toBe(true)
+    } finally {
+      if (original === undefined) delete process.env.__NEXT_REQUEST_INSIGHTS
+      else process.env.__NEXT_REQUEST_INSIGHTS = original
+    }
   })
 
   it('captures the destination before a stream resumes in another context', () => {
